@@ -9,7 +9,9 @@ import {
   Users,
   Loader2,
   Download,
-  Filter
+  Filter,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { 
@@ -95,6 +97,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [filterStake, setFilterStake] = useState('');
   const [filterWard, setFilterWard] = useState('');
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<FormData | null>(null);
   const [wards, setWards] = useState<string[]>([]); // For editing modal
@@ -116,7 +122,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
          return;
     }
 
-    const q = query(collection(db, "ysa_registrations"), orderBy("timestamp", "desc"));
+    const q = query(collection(db, "ysa_registrations"), orderBy("timestamp", "asc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const data: FormData[] = snapshot.docs.map(doc => ({
@@ -147,6 +153,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return () => unsubscribe();
   }, []);
 
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterGender, filterTShirt, filterStake, filterWard]);
+
   // Filter registrations based on search and dropdown filters
   const filteredRegistrations = registrations.filter(reg => {
     const matchesSearch = 
@@ -161,6 +172,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
     return matchesSearch && matchesGender && matchesTShirt && matchesStake && matchesWard;
   });
+
+  // Pagination Logic
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = filteredRegistrations.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredRegistrations.length / itemsPerPage);
+
+  const paginate = (pageNumber: number) => setCurrentPage(pageNumber);
 
   const handleDelete = async (id: string) => {
     if (window.confirm('តើអ្នកពិតជាចង់លុបឈ្មោះនេះមែនទេ?')) {
@@ -428,7 +447,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
 
         {/* Table Container */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex flex-col">
             <div className="overflow-x-auto">
                 <table className="w-full whitespace-nowrap text-sm text-left">
                     <thead className="bg-gray-50 text-gray-700 font-bold border-b border-gray-200">
@@ -458,10 +477,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                     </div>
                                 </td>
                             </tr>
-                        ) : filteredRegistrations.length > 0 ? (
-                            filteredRegistrations.map((reg, index) => (
+                        ) : currentItems.length > 0 ? (
+                            currentItems.map((reg, index) => (
                             <tr key={reg.id} className="hover:bg-gray-50/80 transition-colors">
-                                <td className="px-4 py-3 text-gray-500 font-mono">{index + 1}</td>
+                                {/* Calculate global index based on pagination */}
+                                <td className="px-4 py-3 text-gray-500 font-mono">{indexOfFirstItem + index + 1}</td>
                                 <td className="px-4 py-3 font-bold text-gray-800">{reg.fullName}</td>
                                 <td className="px-4 py-3 text-gray-600">{reg.englishName}</td>
                                 <td className="px-4 py-3">
@@ -519,6 +539,53 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     </tbody>
                 </table>
             </div>
+            
+            {/* Pagination Footer */}
+            {!isLoading && filteredRegistrations.length > 0 && (
+                <div className="border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
+                    <div className="text-sm text-gray-500">
+                        បង្ហាញ {indexOfFirstItem + 1} ទៅ {Math.min(indexOfLastItem, filteredRegistrations.length)} នៃ {filteredRegistrations.length} អ្នក
+                    </div>
+                    <div className="flex items-center space-x-1">
+                        <button
+                            onClick={() => paginate(currentPage - 1)}
+                            disabled={currentPage === 1}
+                            className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        
+                        <div className="hidden sm:flex space-x-1">
+                            {Array.from({ length: totalPages }, (_, i) => i + 1).map(number => (
+                                <button
+                                    key={number}
+                                    onClick={() => paginate(number)}
+                                    className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                                        currentPage === number 
+                                        ? 'bg-red-600 text-white border border-red-600' 
+                                        : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {number}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Mobile view simple page indicator */}
+                        <div className="sm:hidden px-2 text-sm font-medium">
+                           {currentPage} / {totalPages}
+                        </div>
+
+                        <button
+                            onClick={() => paginate(currentPage + 1)}
+                            disabled={currentPage === totalPages}
+                            className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <ChevronRight className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
       </div>
 

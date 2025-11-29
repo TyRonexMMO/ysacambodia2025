@@ -18,7 +18,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 
 interface FormData {
   id?: string; // Changed from number to string for Firestore ID
@@ -116,17 +116,11 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
   const [dateLimits, setDateLimits] = useState({ min: '', max: '' });
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Calculate Date Limits for Age 18-35
+  // Set specific Date Limits (1990 - 2006)
   useEffect(() => {
-    const today = new Date();
-    // 35 years ago (Oldest allowed)
-    const minDate = new Date(today.getFullYear() - 35, today.getMonth(), today.getDate());
-    // 18 years ago (Youngest allowed)
-    const maxDate = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate());
-
     setDateLimits({
-      min: minDate.toISOString().split('T')[0],
-      max: maxDate.toISOString().split('T')[0]
+      min: '1990-01-01',
+      max: '2006-12-31'
     });
   }, []);
 
@@ -181,6 +175,13 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
       }
     }
 
+    // Validation for Phone Number: Only allow digits and spaces
+    if (name === 'phoneNumber') {
+      if (!/^[0-9\s]*$/.test(value)) {
+        return;
+      }
+    }
+
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
@@ -193,11 +194,66 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
     setSubmitError('');
     
     try {
+        // Validate Phone Number Format (Starts with 0, 8-10 digits)
+        const cleanPhone = formData.phoneNumber.replace(/\s/g, '');
+        if (!/^0\d{7,9}$/.test(cleanPhone)) {
+             const msg = "លេខទូរស័ព្ទមិនត្រឹមត្រូវ! សូមបញ្ចូលលេខចាប់ផ្តើមដោយ 0 និងមានចំនួន ៨ ទៅ ១០ ខ្ទង់។";
+             alert(msg);
+             setSubmitError(msg);
+             setIsSubmitting(false);
+             return;
+        }
+
+        const fullNameTrimmed = formData.fullName.trim();
+        const englishNameTrimmed = formData.englishName.trim();
+
+        // 1. Check for Duplicates (Name + English Name)
+        let isDuplicate = false;
+
+        if (db) {
+            try {
+                // Check Firestore
+                const q = query(
+                    collection(db, "ysa_registrations"),
+                    where("fullName", "==", fullNameTrimmed),
+                    where("englishName", "==", englishNameTrimmed)
+                );
+                const querySnapshot = await getDocs(q);
+                if (!querySnapshot.empty) {
+                    isDuplicate = true;
+                }
+            } catch (err) {
+                 // If permission denied, checking duplicate online might fail, fallback to local later
+                 console.warn("Could not check duplicate online:", err);
+            }
+        } 
+        
+        // Check Local Storage (Always check as a secondary or primary measure)
+        if (!isDuplicate) {
+             const localData = JSON.parse(localStorage.getItem('ysa_registrations') || '[]');
+             const existsLocally = localData.some((item: any) => 
+                item.fullName.trim() === fullNameTrimmed && 
+                item.englishName.trim() === englishNameTrimmed
+             );
+             if (existsLocally) isDuplicate = true;
+        }
+
+        if (isDuplicate) {
+            const msg = `ឈ្មោះ "${fullNameTrimmed}" (${englishNameTrimmed}) នេះមានក្នុងប្រព័ន្ធរួចរាល់ហើយ!`;
+            alert(msg);
+            setSubmitError(msg);
+            setIsSubmitting(false);
+            return; // STOP SUBMISSION
+        }
+
+        // 2. Proceed with Saving
         if (!db) throw new Error("Database not configured");
 
         // Save to Firebase Firestore
         const newRegistration = {
           ...formData,
+          fullName: fullNameTrimmed,
+          englishName: englishNameTrimmed,
           timestamp: new Date().toISOString()
         };
 
@@ -222,11 +278,23 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
 
         if (isConfigError || isPermissionError) {
              console.warn("Falling back to local storage due to missing/error Firebase config or permissions");
-             const existingData = JSON.parse(localStorage.getItem('ysa_registrations') || '[]');
-             localStorage.setItem('ysa_registrations', JSON.stringify([...existingData, { ...formData, id: 'local_' + Date.now(), timestamp: new Date().toISOString() }]));
              
-             setIsSubmitted(true);
-             window.scrollTo(0, 0);
+             // Double check local duplicate before saving locally
+             const existingData = JSON.parse(localStorage.getItem('ysa_registrations') || '[]');
+             const isDuplicateLocal = existingData.some((item: any) => 
+                item.fullName.trim() === formData.fullName.trim() && 
+                item.englishName.trim() === formData.englishName.trim()
+             );
+
+             if (isDuplicateLocal) {
+                const msg = `ឈ្មោះ "${formData.fullName}" នេះមានក្នុងប្រព័ន្ធរួចរាល់ហើយ!`;
+                alert(msg);
+                setSubmitError(msg);
+             } else {
+                localStorage.setItem('ysa_registrations', JSON.stringify([...existingData, { ...formData, id: 'local_' + Date.now(), timestamp: new Date().toISOString() }]));
+                setIsSubmitted(true);
+                window.scrollTo(0, 0);
+             }
         } else {
              // Only show user-facing error for other types of failures
              setSubmitError("មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យ។ សូមព្យាយាមម្តងទៀត ឬពិនិត្យមើលការភ្ជាប់អ៊ីនធឺណិត។");
@@ -362,7 +430,7 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
         <TreePine className="absolute bottom-[-20px] left-[-20px] text-green-900/40 w-48 h-48 rotate-6" />
         <TreePine className="absolute bottom-[-10px] right-[-30px] text-green-900/40 w-56 h-56 -rotate-6" />
 
-        <div className="relative z-10 pt-12 px-4 text-center max-w-4xl mx-auto">
+        <div className="relative z-10 pt-12 px-4 text-center max-w-5xl mx-auto">
           <div className="inline-flex items-center justify-center p-2 px-4 bg-red-900/30 backdrop-blur-sm rounded-full mb-6 border border-yellow-500/50 shadow-lg">
             <Gift className="w-5 h-5 mr-2 text-yellow-400" />
             <span className="font-bold tracking-wide text-yellow-100 uppercase text-sm">Christmas Party 2025</span>
@@ -372,16 +440,21 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
             <span className="block text-lg md:text-2xl font-bold mb-4 text-yellow-100/90 animate-pulse-slow">
               ការចុះឈ្មោះចូលរួមក្នុងកម្មវិធី
             </span>
-            <div className="flex flex-col items-center">
-              <span className="block text-xl sm:text-3xl md:text-5xl lg:text-6xl font-extrabold leading-tight drop-shadow-lg mb-1 md:mb-2 whitespace-nowrap">
-                ដំណើរកម្សាន្តយុវមជ្ឈិមវ័យនៅលីវទូទាំងប្រទេស
-              </span>
-              <div className="">
-                 <span className="block text-4xl sm:text-6xl md:text-8xl font-extrabold leading-tight text-yellow-300 drop-shadow-[0_5px_5px_rgba(0,0,0,0.5)] transform hover:scale-105 transition-transform duration-500">
-                  ទៅកាន់ វីគិរីរម្យ
+            <div className="flex flex-col items-center gap-2 md:gap-4">
+              {/* Line 1: Main Destination (Big, Yellow) */}
+              <div className="px-2">
+                 <span className="block text-3xl sm:text-5xl md:text-7xl font-extrabold leading-tight text-yellow-300 drop-shadow-[0_5px_5px_rgba(0,0,0,0.5)] transform hover:scale-105 transition-transform duration-500">
+                  ដំណើរកម្សាន្តទៅកាន់រមណីយដ្ឋានវីគិរីរម្យ
                 </span>
               </div>
-              <span className="block text-2xl sm:text-4xl md:text-6xl font-bold mt-2 md:mt-4 text-white/95 drop-shadow-md">
+              
+              {/* Line 2: Audience (Medium, White) */}
+              <span className="block text-xl sm:text-3xl md:text-5xl font-bold leading-tight drop-shadow-lg text-white/95 max-w-4xl">
+                សម្រាប់យុវមជ្ឈិមវ័យនៅលីវទូទាំងប្រទេស
+              </span>
+
+              {/* Line 3: Year (Medium, White) */}
+              <span className="block text-2xl sm:text-4xl md:text-6xl font-bold mt-2 text-white/90 drop-shadow-md">
                 ប្រចាំឆ្នាំ ២០២៥
               </span>
             </div>
@@ -458,7 +531,7 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                     />
                     <Calendar className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
                   </div>
-                  <p className="text-sm text-green-600 font-medium">អនុញ្ញាតសម្រាប់អាយុ ១៨ ដល់ ៣៥ ឆ្នាំ</p>
+                  <p className="text-sm text-green-600 font-medium">សម្រាប់អ្នកកើតឆ្នាំ ១៩៩០ ដល់ ២០០៦ ប៉ុណ្ណោះ</p>
                 </div>
 
                 <div className="space-y-2">
