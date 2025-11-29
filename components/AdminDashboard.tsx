@@ -106,6 +106,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [wards, setWards] = useState<string[]>([]); // For editing modal
   const [isLoading, setIsLoading] = useState(true);
 
+  // Helper to convert number to Khmer numerals
+  const toKhmerNumerals = (num: number) => {
+    const khmerNums = ['០', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
+    return num.toString().split('').map(n => khmerNums[parseInt(n)]).join('');
+  };
+
   // Fetch Data from Firebase (Real-time listener)
   useEffect(() => {
     if (!db) {
@@ -115,14 +121,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
              const parsed = JSON.parse(data).map((item: any) => ({
                  ...item,
                  id: item.id.toString() // Ensure ID is string for consistency
-             }));
+             })).sort((a: FormData, b: FormData) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
              setRegistrations(parsed);
          }
          setIsLoading(false);
          return;
     }
 
-    const q = query(collection(db, "ysa_registrations"), orderBy("timestamp", "asc"));
+    // Sort by timestamp Descending (Newest first)
+    const q = query(collection(db, "ysa_registrations"), orderBy("timestamp", "desc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const data: FormData[] = snapshot.docs.map(doc => ({
@@ -143,7 +150,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                  const parsed = JSON.parse(data).map((item: any) => ({
                      ...item,
                      id: item.id.toString()
-                 }));
+                 })).sort((a: FormData, b: FormData) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
                  setRegistrations(parsed);
              }
         }
@@ -375,7 +382,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 
                 <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-200 flex items-center gap-2 whitespace-nowrap">
                     {isLoading && <Loader2 className="w-5 h-5 animate-spin text-red-500" />}
-                    <span className="text-gray-600 font-bold text-sm">សរុប: <span className="text-red-600 text-lg">{filteredRegistrations.length}</span></span>
+                    <span className="text-gray-600 font-bold text-sm">សរុប: <span className="text-red-600 text-lg">{toKhmerNumerals(filteredRegistrations.length)}</span></span>
                 </div>
             </div>
         </div>
@@ -478,57 +485,64 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 </td>
                             </tr>
                         ) : currentItems.length > 0 ? (
-                            currentItems.map((reg, index) => (
-                            <tr key={reg.id} className="hover:bg-gray-50/80 transition-colors">
-                                {/* Calculate global index based on pagination */}
-                                <td className="px-4 py-3 text-gray-500 font-mono">{indexOfFirstItem + index + 1}</td>
-                                <td className="px-4 py-3 font-bold text-gray-800">{reg.fullName}</td>
-                                <td className="px-4 py-3 text-gray-600">{reg.englishName}</td>
-                                <td className="px-4 py-3">
-                                    <span className={`px-2 py-1 rounded text-xs font-bold ${reg.gender === 'ប្រុស' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
-                                        {reg.gender}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-gray-600">{reg.dob}</td>
-                                <td className="px-4 py-3">
-                                    <span className="px-2 py-1 rounded bg-gray-100 text-gray-700 font-bold text-xs border border-gray-200">
-                                        {reg.tShirtSize}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 font-mono text-gray-600">{reg.phoneNumber}</td>
-                                <td className="px-4 py-3 text-gray-600">{reg.stake}</td>
-                                <td className="px-4 py-3 text-gray-600">{reg.ward}</td>
-                                <td className="px-4 py-3 font-mono text-gray-500">{reg.recordNumber || '-'}</td>
-                                <td className="px-4 py-3">
-                                    {getPaymentLabel(reg.paymentStatus, reg.otherReason)}
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                    {reg.mediaConsent ? (
-                                        <span className="text-green-500 text-xs font-bold border border-green-200 bg-green-50 px-2 py-1 rounded">យល់ព្រម</span>
-                                    ) : (
-                                        <span className="text-red-500 text-xs font-bold">បដិសេធ</span>
-                                    )}
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                    <div className="flex items-center justify-center space-x-2">
-                                        <button 
-                                            onClick={() => handleEditClick(reg)}
-                                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
-                                            title="កែសម្រួល"
-                                        >
-                                            <Edit className="w-4 h-4" />
-                                        </button>
-                                        <button 
-                                            onClick={() => handleDelete(reg.id)}
-                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                            title="លុបចោល"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))
+                            currentItems.map((reg, index) => {
+                                // Calculate global index relative to the FULL filtered list
+                                const globalIndex = indexOfFirstItem + index;
+                                // Count BACKWARDS from the total length (Newest = Highest Number)
+                                // If list has 10 items. Item 0 (Newest) should show 10. Item 1 should show 9.
+                                const displayNumber = filteredRegistrations.length - globalIndex;
+                                const khmerNumber = toKhmerNumerals(displayNumber);
+
+                                return (
+                                <tr key={reg.id} className="hover:bg-gray-50/80 transition-colors">
+                                    <td className="px-4 py-3 text-gray-800 font-bold font-khmer">{khmerNumber}</td>
+                                    <td className="px-4 py-3 font-bold text-gray-800">{reg.fullName}</td>
+                                    <td className="px-4 py-3 text-gray-600">{reg.englishName}</td>
+                                    <td className="px-4 py-3">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold ${reg.gender === 'ប្រុស' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                                            {reg.gender}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-gray-600">{reg.dob}</td>
+                                    <td className="px-4 py-3">
+                                        <span className="px-2 py-1 rounded bg-gray-100 text-gray-700 font-bold text-xs border border-gray-200">
+                                            {reg.tShirtSize}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 font-mono text-gray-600">{reg.phoneNumber}</td>
+                                    <td className="px-4 py-3 text-gray-600">{reg.stake}</td>
+                                    <td className="px-4 py-3 text-gray-600">{reg.ward}</td>
+                                    <td className="px-4 py-3 font-mono text-gray-500 uppercase">{reg.recordNumber || '-'}</td>
+                                    <td className="px-4 py-3">
+                                        {getPaymentLabel(reg.paymentStatus, reg.otherReason)}
+                                    </td>
+                                    <td className="px-4 py-3 text-center">
+                                        {reg.mediaConsent ? (
+                                            <span className="text-green-500 text-xs font-bold border border-green-200 bg-green-50 px-2 py-1 rounded">យល់ព្រម</span>
+                                        ) : (
+                                            <span className="text-red-500 text-xs font-bold">បដិសេធ</span>
+                                        )}
+                                    </td>
+                                    <td className="px-4 py-3 text-center">
+                                        <div className="flex items-center justify-center space-x-2">
+                                            <button 
+                                                onClick={() => handleEditClick(reg)}
+                                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
+                                                title="កែសម្រួល"
+                                            >
+                                                <Edit className="w-4 h-4" />
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDelete(reg.id)}
+                                                className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="លុបចោល"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )})
                         ) : (
                             <tr>
                                 <td colSpan={13} className="px-4 py-8 text-center text-gray-500">
@@ -646,7 +660,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                      </div>
                      <div>
                         <label className="block text-sm font-bold text-gray-700 mb-1">លេខកូដសមាជិក</label>
-                        <input type="text" name="recordNumber" value={editForm.recordNumber} onChange={handleEditChange} className="w-full p-2 border rounded-lg" />
+                        <input type="text" name="recordNumber" value={editForm.recordNumber} onChange={handleEditChange} className="w-full p-2 border rounded-lg uppercase" />
                      </div>
                      
                      <div className="md:col-span-2 border-t pt-4">

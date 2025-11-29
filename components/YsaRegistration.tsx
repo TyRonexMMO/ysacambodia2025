@@ -116,11 +116,11 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
   const [dateLimits, setDateLimits] = useState({ min: '', max: '' });
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Set specific Date Limits (1990 - 2006)
+  // Set specific Date Limits (1990 - 2007)
   useEffect(() => {
     setDateLimits({
       min: '1990-01-01',
-      max: '2006-12-31'
+      max: '2007-12-31'
     });
   }, []);
 
@@ -182,6 +182,30 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
       }
     }
 
+    // Auto-formatting for Membership Record Number (Alphanumeric Support)
+    if (name === 'recordNumber') {
+      // 1. Remove any non-alphanumeric characters, convert to Uppercase
+      const rawChars = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      
+      // 2. Limit to 11 chars
+      const truncated = rawChars.slice(0, 11);
+      
+      // 3. Format as XXX-XXXX-XXXX
+      let formatted = truncated;
+      if (truncated.length > 3) {
+        formatted = truncated.slice(0, 3) + '-' + truncated.slice(3);
+      }
+      if (truncated.length > 7) {
+        formatted = formatted.slice(0, 8) + '-' + formatted.slice(8);
+      }
+
+      setFormData(prev => ({
+        ...prev,
+        [name]: formatted
+      }));
+      return;
+    }
+
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
@@ -194,6 +218,18 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
     setSubmitError('');
     
     try {
+        // Validate Date of Birth (Year 1990 - 2007)
+        if (formData.dob) {
+            const selectedYear = new Date(formData.dob).getFullYear();
+            if (selectedYear < 1990 || selectedYear > 2007) {
+                const msg = "សូមអភ័យទោស! ការចុះឈ្មោះនេះអនុញ្ញាតសម្រាប់តែអ្នកកើតឆ្នាំ ១៩៩០ ដល់ ២០០៧ ប៉ុណ្ណោះ។";
+                alert(msg);
+                setSubmitError(msg);
+                setIsSubmitting(false);
+                return;
+            }
+        }
+
         // Validate Phone Number Format (Starts with 0, 8-10 digits)
         const cleanPhone = formData.phoneNumber.replace(/\s/g, '');
         if (!/^0\d{7,9}$/.test(cleanPhone)) {
@@ -202,6 +238,19 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
              setSubmitError(msg);
              setIsSubmitting(false);
              return;
+        }
+
+        // Validate Membership Record Number (Standard Format: 11 characters total)
+        if (formData.recordNumber) {
+            const cleanRecord = formData.recordNumber.replace(/-/g, '');
+            // Check if it has exactly 11 characters (alphanumeric)
+            if (!/^[A-Z0-9]{11}$/.test(cleanRecord)) {
+                const msg = "លេខកូដសមាជិកមិនត្រឹមត្រូវ! លេខកូដសមាជិកត្រូវមាន ១១ ខ្ទង់ (ឧទាហរណ៍: 000-1234-5678 ឬ A12-34B6-78CD)។";
+                alert(msg);
+                setSubmitError(msg);
+                setIsSubmitting(false);
+                return;
+            }
         }
 
         const fullNameTrimmed = formData.fullName.trim();
@@ -531,7 +580,7 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                     />
                     <Calendar className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
                   </div>
-                  <p className="text-sm text-green-600 font-medium">សម្រាប់អ្នកកើតឆ្នាំ ១៩៩០ ដល់ ២០០៦ ប៉ុណ្ណោះ</p>
+                  <p className="text-sm text-green-600 font-medium">សម្រាប់អ្នកកើតឆ្នាំ ១៩៩០ ដល់ ២០០៧ ប៉ុណ្ណោះ</p>
                 </div>
 
                 <div className="space-y-2">
@@ -648,11 +697,13 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                   <input 
                     type="text" 
                     name="recordNumber"
-                    className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all"
-                    placeholder="ឧ. 000-1234-5678"
+                    maxLength={13}
+                    className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all uppercase"
+                    placeholder="000-123A-BC56"
                     value={formData.recordNumber}
                     onChange={handleChange}
                   />
+                  <p className="text-sm text-gray-400 italic">អនុញ្ញាតបញ្ចូលលេខ និងអក្សរ (ប្រព័ន្ធនឹងដាក់សញ្ញា - ដោយស្វ័យប្រវត្តិ)</p>
                 </div>
               </div>
             </section>
