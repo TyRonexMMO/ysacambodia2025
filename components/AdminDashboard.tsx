@@ -11,7 +11,19 @@ import {
   Download,
   Filter,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Shirt,
+  Banknote,
+  PieChart,
+  Shield,
+  Eye,
+  UserPlus,
+  ShieldCheck,
+  LayoutGrid,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  FileText
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { 
@@ -21,8 +33,20 @@ import {
     doc, 
     updateDoc, 
     query, 
-    orderBy 
+    orderBy,
+    addDoc,
+    where,
+    getDocs
 } from 'firebase/firestore';
+
+// Extend window interface to include ExcelJS and html2pdf loaded from CDN
+declare global {
+  interface Window {
+    ExcelJS: any;
+    saveAs: any;
+    html2pdf: any;
+  }
+}
 
 interface FormData {
   id: string; // Firestore uses string IDs
@@ -39,10 +63,20 @@ interface FormData {
   paymentStatus: string;
   otherReason: string;
   timestamp: string;
+  isPaid?: boolean; // New field for Admin Verification
+}
+
+interface SystemUser {
+  id: string;
+  username: string;
+  password: string; // Note: In production, this should be hashed. Using plain text for simple demo.
+  role: 'admin' | 'viewer';
+  createdAt: string;
 }
 
 interface AdminDashboardProps {
   onLogout: () => void;
+  role: 'admin' | 'viewer';
 }
 
 // Reusing locations from main form for editing
@@ -87,7 +121,10 @@ const locations: Record<string, string[]> = {
     ]
   };
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
+  const [activeTab, setActiveTab] = useState<'registrations' | 'users'>('registrations');
+  
+  // Registration Data State
   const [registrations, setRegistrations] = useState<FormData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -105,6 +142,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [editForm, setEditForm] = useState<FormData | null>(null);
   const [wards, setWards] = useState<string[]>([]); // For editing modal
   const [isLoading, setIsLoading] = useState(true);
+  const [showStats, setShowStats] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
+
+  // User Management State
+  const [systemUsers, setSystemUsers] = useState<SystemUser[]>([]);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'viewer' });
+  const [userError, setUserError] = useState('');
+
+  // Notification State
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  // Clear notification automatically
+  useEffect(() => {
+    if (notification) {
+        const timer = setTimeout(() => {
+            setNotification(null);
+        }, 3000);
+        return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   // Helper to convert number to Khmer numerals
   const toKhmerNumerals = (num: number) => {
@@ -112,24 +172,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return num.toString().split('').map(n => khmerNums[parseInt(n)]).join('');
   };
 
-  // Fetch Data from Firebase (Real-time listener)
+  // Fetch Registrations
   useEffect(() => {
     if (!db) {
-         // Fallback to local storage if DB is not configured (just for display purposes in this demo)
          const data = localStorage.getItem('ysa_registrations');
          if (data) {
              const parsed = JSON.parse(data).map((item: any) => ({
                  ...item,
-                 id: item.id.toString() // Ensure ID is string for consistency
-             })).sort((a: FormData, b: FormData) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+                 id: item.id.toString()
+             })).sort((a: FormData, b: FormData) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
              setRegistrations(parsed);
          }
          setIsLoading(false);
          return;
     }
 
-    // Sort by timestamp Descending (Newest first)
-    const q = query(collection(db, "ysa_registrations"), orderBy("timestamp", "desc"));
+    const q = query(collection(db, "ysa_registrations"), orderBy("timestamp", "asc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const data: FormData[] = snapshot.docs.map(doc => ({
@@ -140,32 +198,33 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         setIsLoading(false);
     }, (error: any) => {
         console.error("Error fetching registrations: ", error);
-        
-        // Handle Permission Error by falling back to Local Storage
-        const errorMessage = error?.message || "";
-        if (error?.code === 'permission-denied' || errorMessage.includes("Missing or insufficient permissions") || errorMessage.includes("permission-denied")) {
-             console.warn("Falling back to local storage due to permission error");
-             const data = localStorage.getItem('ysa_registrations');
-             if (data) {
-                 const parsed = JSON.parse(data).map((item: any) => ({
-                     ...item,
-                     id: item.id.toString()
-                 })).sort((a: FormData, b: FormData) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-                 setRegistrations(parsed);
-             }
-        }
         setIsLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
+  // Fetch System Users (Only if Admin and Tab is Users)
+  useEffect(() => {
+    if (activeTab === 'users' && role === 'admin' && db) {
+        const q = query(collection(db, "ysa_users"), orderBy("createdAt", "desc"));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const data: SystemUser[] = snapshot.docs.map(doc => ({
+                ...(doc.data() as Omit<SystemUser, 'id'>),
+                id: doc.id
+            }));
+            setSystemUsers(data);
+        });
+        return () => unsubscribe();
+    }
+  }, [activeTab, role]);
+
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filterGender, filterTShirt, filterStake, filterWard]);
 
-  // Filter registrations based on search and dropdown filters
+  // Filter registrations
   const filteredRegistrations = registrations.filter(reg => {
     const matchesSearch = 
         reg.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -188,28 +247,54 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
   const paginate = (pageNumber: number) => setCurrentPage(pageNumber);
 
+  // --- Registration Actions ---
   const handleDelete = async (id: string) => {
+    if (role !== 'admin') return;
+
     if (window.confirm('តើអ្នកពិតជាចង់លុបឈ្មោះនេះមែនទេ?')) {
       if (db) {
           try {
               await deleteDoc(doc(db, "ysa_registrations", id));
+              setNotification({ message: 'ទិន្នន័យត្រូវបានលុបដោយជោគជ័យ', type: 'success' });
           } catch (error) {
               console.error("Error deleting document: ", error);
-              // If online delete fails (e.g. permission), try local
-              const updatedList = registrations.filter(reg => reg.id !== id);
-              setRegistrations(updatedList);
-              localStorage.setItem('ysa_registrations', JSON.stringify(updatedList));
+              setNotification({ message: 'មានបញ្ហាក្នុងការលុបទិន្នន័យ', type: 'error' });
           }
       } else {
-          // Local storage fallback
           const updatedList = registrations.filter(reg => reg.id !== id);
           setRegistrations(updatedList);
           localStorage.setItem('ysa_registrations', JSON.stringify(updatedList));
+          setNotification({ message: 'ទិន្នន័យត្រូវបានលុបដោយជោគជ័យ', type: 'success' });
       }
     }
   };
 
+  // Toggle Payment Verification
+  const handleTogglePaid = async (reg: FormData) => {
+      if (role !== 'admin') return;
+
+      const newPaidStatus = !reg.isPaid;
+      
+      try {
+          if (db) {
+              const docRef = doc(db, "ysa_registrations", reg.id);
+              await updateDoc(docRef, { isPaid: newPaidStatus });
+          } else {
+               // Local Storage Update
+               const updatedList = registrations.map(r => 
+                  r.id === reg.id ? { ...r, isPaid: newPaidStatus } : r
+               );
+               setRegistrations(updatedList);
+               localStorage.setItem('ysa_registrations', JSON.stringify(updatedList));
+          }
+      } catch (error) {
+          console.error("Error updating payment status:", error);
+          setNotification({ message: 'Failed to update payment status', type: 'error' });
+      }
+  };
+
   const handleEditClick = (reg: FormData) => {
+    if (role !== 'admin') return;
     setEditingId(reg.id);
     setEditForm({ ...reg });
     if (reg.stake && locations[reg.stake]) {
@@ -231,46 +316,37 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setEditForm(prev => {
         if (!prev) return null;
         const updated = { ...prev, [name]: newVal };
-        
-        // Update wards if stake changes
         if (name === 'stake') {
             setWards(locations[value as string] || []);
-            updated.ward = ''; // Reset ward
+            updated.ward = '';
         }
         return updated;
     });
   };
 
   const handleSaveEdit = async () => {
-    if (!editForm || !editingId) return;
+    if (!editForm || !editingId || role !== 'admin') return;
     
-    if (db) {
-        try {
+    try {
+        if (db) {
             const { id, ...dataToUpdate } = editForm;
             const docRef = doc(db, "ysa_registrations", id);
             await updateDoc(docRef, dataToUpdate as any);
-            setEditingId(null);
-            setEditForm(null);
-        } catch (error) {
-            console.error("Error updating document: ", error);
-            // Fallback save locally if cloud fails
+        } else {
             const updatedList = registrations.map(reg => 
                 reg.id === editForm.id ? editForm : reg
             );
             setRegistrations(updatedList);
             localStorage.setItem('ysa_registrations', JSON.stringify(updatedList));
-            setEditingId(null);
-            setEditForm(null);
         }
-    } else {
-        // Local storage fallback
-        const updatedList = registrations.map(reg => 
-            reg.id === editForm.id ? editForm : reg
-        );
-        setRegistrations(updatedList);
-        localStorage.setItem('ysa_registrations', JSON.stringify(updatedList));
+
         setEditingId(null);
         setEditForm(null);
+        setNotification({ message: 'ព័ត៌មានត្រូវបានកែប្រែដោយជោគជ័យ!', type: 'success' });
+
+    } catch (error) {
+        console.error("Error updating document: ", error);
+        setNotification({ message: 'មានបញ្ហាក្នុងការកែប្រែព័ត៌មាន', type: 'error' });
     }
   };
 
@@ -279,50 +355,278 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setEditForm(null);
   };
 
-  const handleExportCSV = () => {
-    // Define headers
-    const headers = [
-      "No", "Khmer Name", "English Name", "Gender", "DOB", "T-Shirt", 
-      "Phone", "Stake", "Ward", "Record Number", "Payment Status", 
-      "Other Reason", "Media Consent", "Timestamp"
-    ];
+  // --- Export PDF Function ---
+  const handleExportPDF = async (orientation: 'portrait' | 'landscape') => {
+      setIsGeneratingPdf(true);
+      setShowPdfModal(false);
 
-    // Convert data to CSV format
-    const csvContent = [
-      headers.join(","), // Header row
-      ...filteredRegistrations.map((reg, index) => { // Use filteredRegistrations to export only what is seen
-        return [
-          index + 1,
-          `"${reg.fullName}"`, // Quote strings to handle commas inside content
-          `"${reg.englishName}"`,
-          `"${reg.gender}"`,
-          `"${reg.dob}"`,
-          `"${reg.tShirtSize}"`,
-          `"${reg.phoneNumber}"`,
-          `"${reg.stake}"`,
-          `"${reg.ward}"`,
-          `"${reg.recordNumber || ''}"`,
-          `"${reg.paymentStatus}"`,
-          `"${reg.otherReason || ''}"`,
-          reg.mediaConsent ? "Yes" : "No",
-          `"${reg.timestamp}"`
-        ].join(",");
-      })
-    ].join("\n");
+      if (!window.html2pdf) {
+          console.error("html2pdf library not loaded");
+          setNotification({ message: 'Library html2pdf មិនដំណើរការ សូម Refresh', type: 'error' });
+          setIsGeneratingPdf(false);
+          return;
+      }
 
-    // Create a Blob and trigger download
-    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' }); // Add BOM for Excel UTF-8 support
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute("href", url);
-    link.setAttribute("download", `ysa_registrations_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      // Determine Filter Description text
+      let filterDescription = "អ្នកចូលរួមទាំងអស់";
+      if (filterStake) {
+          filterDescription = filterStake;
+          if (filterWard) {
+              filterDescription += ` (${filterWard})`;
+          }
+      }
+
+      // Create formatting for the table
+      const rows = filteredRegistrations.map((reg, index) => {
+          return `
+            <tr style="border-bottom: 1px solid #e5e7eb;">
+                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb; font-weight: bold;">${toKhmerNumerals(index + 1)}</td>
+                <td style="padding: 12px 10px; border: 1px solid #e5e7eb; white-space: nowrap; font-weight: bold;">${reg.fullName}</td>
+                <td style="padding: 12px 10px; border: 1px solid #e5e7eb; white-space: nowrap;">${reg.englishName}</td>
+                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">${reg.gender}</td>
+                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">${reg.tShirtSize}</td>
+                <td style="padding: 12px 10px; border: 1px solid #e5e7eb; white-space: nowrap;">${reg.phoneNumber}</td>
+                <td style="padding: 12px 10px; border: 1px solid #e5e7eb;">${reg.stake}</td>
+                <td style="padding: 12px 10px; border: 1px solid #e5e7eb;">${reg.ward}</td>
+                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">${reg.recordNumber ? 'មាន' : 'អត់'}</td>
+                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">
+                    <div style="width: 16px; height: 16px; border: 1px solid #666; display: inline-block; background: white; border-radius: 2px;"></div>
+                </td>
+            </tr>
+          `;
+      }).join('');
+
+      // Construct HTML Content with styles matching Dashboard
+      // Added filter description line as requested
+      const content = `
+        <div style="font-family: 'Kantumruy Pro', sans-serif; padding: 10px; width: 100%; box-sizing: border-box;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="font-family: 'Moul', serif; color: #b91c1c; font-size: 22px; margin-bottom: 5px;">បញ្ជីឈ្មោះអ្នកចុះឈ្មោះ YSA 2025</h1>
+                <p style="font-size: 12px; color: #666; margin-bottom: 4px;">កាលបរិច្ឆេទ: ${new Date().toLocaleDateString('km-KH')} | ចំនួនសរុប: ${toKhmerNumerals(filteredRegistrations.length)} នាក់</p>
+                <p style="font-size: 14px; font-weight: bold; color: #333;">របាយការណ៍លទ្ឋផលទិន្នន័យសម្រាប់: ${filterDescription}</p>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 11px; table-layout: auto;">
+                <thead>
+                    <tr style="background-color: #DC2626; color: white; font-weight: bold;">
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C; width: 30px;">ល.រ</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C; white-space: nowrap;">ឈ្មោះ (ខ្មែរ)</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C; white-space: nowrap;">ឈ្មោះ (អង់គ្លេស)</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">ភេទ</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">អាវ</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">លេខទូរស័ព្ទ</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">ស្តេក/មណ្ឌល</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">វួដ/សាខា</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">លេខកូដសមាជិក</th>
+                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">ការចូលរួម</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        </div>
+      `;
+
+      // Create a temporary container
+      const element = document.createElement('div');
+      element.innerHTML = content;
+      document.body.appendChild(element);
+
+      const opt = {
+          margin: [5, 5, 5, 5], 
+          filename: `YSA_Registration_List_${new Date().toISOString().split('T')[0]}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: orientation }
+      };
+
+      try {
+          await window.html2pdf().set(opt).from(element).save();
+          setNotification({ message: 'Export PDF ជោគជ័យ!', type: 'success' });
+      } catch (err) {
+          console.error("PDF Export Error:", err);
+          setNotification({ message: 'បរាជ័យក្នុងការ Export PDF', type: 'error' });
+      } finally {
+          document.body.removeChild(element);
+          setIsGeneratingPdf(false);
+      }
   };
+
+  // --- Export Excel Function with Formatting ---
+  const handleExportExcel = async () => {
+    setIsExporting(true);
+    try {
+        if (!window.ExcelJS) {
+            console.error("ExcelJS library not loaded");
+            setNotification({ message: 'Library Excel មិនដំណើរការ សូម Refresh', type: 'error' });
+            return;
+        }
+
+        const workbook = new window.ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('YSA 2025 Registrations');
+
+        // Define Columns with Widths
+        sheet.columns = [
+            { header: 'No', key: 'no', width: 8 },
+            { header: 'ឈ្មោះ (ខ្មែរ)', key: 'fullName', width: 25 },
+            { header: 'ឈ្មោះ (អង់គ្លេស)', key: 'englishName', width: 25 },
+            { header: 'ភេទ', key: 'gender', width: 10 },
+            { header: 'ថ្ងៃកំណើត', key: 'dob', width: 15 },
+            { header: 'ទំហំអាវ', key: 'tShirtSize', width: 10 },
+            { header: 'លេខទូរស័ព្ទ', key: 'phoneNumber', width: 15 },
+            { header: 'ស្តេក/មណ្ឌល', key: 'stake', width: 20 },
+            { header: 'វួដ/សាខា', key: 'ward', width: 20 },
+            { header: 'លេខកូដសមាជិក', key: 'recordNumber', width: 20 }, // Increased width for full number
+            { header: 'ការបង់ប្រាក់', key: 'payment', width: 20 },
+            { header: 'Status', key: 'verified', width: 15 },
+            { header: 'Media', key: 'media', width: 10 },
+            { header: 'Timestamp', key: 'timestamp', width: 25 },
+        ];
+
+        // Add Data Rows
+        filteredRegistrations.forEach((reg, index) => {
+            const paymentText = reg.paymentStatus === 'agree' ? 'យល់ព្រម' : 
+                                reg.paymentStatus === 'not_affordable' ? 'មិនមានលទ្ឋភាព' : 
+                                reg.otherReason || 'ផ្សេងៗ';
+
+            sheet.addRow({
+                no: index + 1,
+                fullName: reg.fullName,
+                englishName: reg.englishName,
+                gender: reg.gender,
+                dob: reg.dob,
+                tShirtSize: reg.tShirtSize,
+                phoneNumber: reg.phoneNumber,
+                stake: reg.stake,
+                ward: reg.ward,
+                recordNumber: reg.recordNumber || '', // Show full number
+                payment: paymentText,
+                verified: reg.isPaid ? 'Paid' : 'Unpaid',
+                media: reg.mediaConsent ? 'Yes' : 'No',
+                timestamp: new Date(reg.timestamp).toLocaleString()
+            });
+        });
+
+        // Apply Styling
+        // 1. Header Styling
+        const headerRow = sheet.getRow(1);
+        headerRow.font = { name: 'Kantumruy Pro', family: 4, size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+        headerRow.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFDC2626' } // Red background matches admin header
+        };
+        headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+        headerRow.height = 30;
+
+        // 2. Content Styling
+        sheet.eachRow((row: any, rowNumber: number) => {
+            if (rowNumber > 1) { // Skip header
+                row.font = { name: 'Kantumruy Pro', family: 4, size: 11 };
+                row.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+                
+                // Zebra Striping for readability
+                if (rowNumber % 2 === 0) {
+                     row.fill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFF9FAFB' } // Light gray
+                    };
+                }
+
+                // Center align specific columns
+                const centerCols = [1, 4, 5, 6, 12, 13];
+                centerCols.forEach(colIdx => {
+                    const cell = row.getCell(colIdx);
+                    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                });
+
+                // Style "Record Number" column (Column 10) - just center align, no specific color
+                const recordCell = row.getCell(10);
+                recordCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+                // Style "Paid" status (Column 12)
+                const paidCell = row.getCell(12);
+                if (paidCell.value === 'Paid') {
+                    paidCell.font = { name: 'Kantumruy Pro', color: { argb: 'FF16A34A' }, bold: true }; // Green
+                } else {
+                    paidCell.font = { name: 'Kantumruy Pro', color: { argb: 'FFDC2626' } }; // Red
+                }
+            }
+
+            // Borders for all cells
+            row.eachCell((cell: any) => {
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                    left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                    bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                    right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+                };
+            });
+        });
+
+        // Generate and Download
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        window.saveAs(blob, `YSA_Registration_2025_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+        setNotification({ message: 'Export Excel ជោគជ័យ!', type: 'success' });
+    } catch (error) {
+        console.error("Export Error:", error);
+        setNotification({ message: 'បរាជ័យក្នុងការ Export Excel', type: 'error' });
+    } finally {
+        setIsExporting(false);
+    }
+  };
+
+  // --- User Management Actions ---
+  const handleAddUser = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setUserError('');
+      if (!db) {
+          setUserError("Database not configured. Cannot create users.");
+          return;
+      }
+      if (!newUser.username || !newUser.password) {
+          setUserError("Please fill in all fields.");
+          return;
+      }
+
+      try {
+          // Check if username exists
+          const q = query(collection(db, "ysa_users"), where("username", "==", newUser.username));
+          const querySnapshot = await getDocs(q);
+          if (!querySnapshot.empty) {
+              setUserError("Username already exists.");
+              return;
+          }
+
+          // Create User
+          await addDoc(collection(db, "ysa_users"), {
+              username: newUser.username,
+              password: newUser.password, // Plain text for simplicity per request context
+              role: newUser.role,
+              createdAt: new Date().toISOString()
+          });
+
+          setShowAddUserModal(false);
+          setNewUser({ username: '', password: '', role: 'viewer' });
+          setNotification({ message: 'User created successfully!', type: 'success' });
+      } catch (err) {
+          console.error("Error creating user:", err);
+          setUserError("Failed to create user.");
+      }
+  };
+
+  const handleDeleteUser = async (id: string, username: string) => {
+      if (window.confirm(`Are you sure you want to delete user "${username}"?`)) {
+          if (db) {
+              await deleteDoc(doc(db, "ysa_users", id));
+              setNotification({ message: 'User deleted successfully', type: 'success' });
+          }
+      }
+  };
+
 
   const getPaymentLabel = (status: string, reason: string) => {
     if (status === 'agree') return <span className="text-green-600 font-bold">យល់ព្រម</span>;
@@ -330,281 +634,551 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return <span className="text-orange-600 italic">{reason}</span>;
   };
 
+  // --- Statistics Logic ---
+  const stats = {
+    total: registrations.length,
+    paid: registrations.filter(r => r.paymentStatus === 'agree').length,
+    verifiedPaid: registrations.filter(r => r.isPaid).length,
+    notPaid: registrations.filter(r => r.paymentStatus !== 'agree').length,
+    male: registrations.filter(r => r.gender === 'ប្រុស').length,
+    female: registrations.filter(r => r.gender === 'ស្រី').length,
+    sizes: {
+        XS: registrations.filter(r => r.tShirtSize === 'XS').length,
+        S: registrations.filter(r => r.tShirtSize === 'S').length,
+        M: registrations.filter(r => r.tShirtSize === 'M').length,
+        L: registrations.filter(r => r.tShirtSize === 'L').length,
+        XL: registrations.filter(r => r.tShirtSize === 'XL').length,
+        XXL: registrations.filter(r => r.tShirtSize === 'XXL').length,
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 font-khmer">
+      {/* Toast Notification */}
+      {notification && (
+        <div className={`fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce-in transition-all duration-300 ${
+            notification.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+        }`}>
+            {notification.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+            <span className="font-bold">{notification.message}</span>
+            <button onClick={() => setNotification(null)} className="ml-2 opacity-80 hover:opacity-100">
+                <X className="w-4 h-4" />
+            </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-30">
-        <div className="max-w-[1400px] mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center space-x-3">
-             <div className="bg-red-600 text-white p-2 rounded-lg">
-                <Users className="w-6 h-6" />
+        <div className="max-w-[1400px] mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center space-x-3 w-full md:w-auto">
+             <div className={`${role === 'admin' ? 'bg-red-600' : 'bg-gray-600'} text-white p-2 rounded-lg`}>
+                {role === 'admin' ? <Shield className="w-6 h-6" /> : <Eye className="w-6 h-6" />}
              </div>
              <div>
-                <h1 className="text-xl font-bold text-gray-800 font-moul">Admin Dashboard</h1>
-                <p className="text-xs text-gray-500">YSA Cambodia Registration 2025 (Cloud)</p>
+                <h1 className="text-xl font-bold text-gray-800 font-moul">
+                    {role === 'admin' ? 'Admin Dashboard' : 'Viewer Dashboard'}
+                </h1>
+                <p className="text-xs text-gray-500">YSA Cambodia Registration 2025</p>
              </div>
           </div>
+
+          {/* Tab Navigation for Admin */}
+          {role === 'admin' && (
+              <div className="flex bg-gray-100 p-1 rounded-xl">
+                  <button 
+                    onClick={() => setActiveTab('registrations')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'registrations' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                      <LayoutGrid className="w-4 h-4" /> ទិន្នន័យចុះឈ្មោះ
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('users')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'users' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                      <Users className="w-4 h-4" /> គ្រប់គ្រងអ្នកប្រើប្រាស់
+                  </button>
+              </div>
+          )}
           
-          <button 
-            onClick={onLogout}
-            className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden md:inline">ចាកចេញ</span>
-          </button>
+          <div className="flex items-center gap-3">
+              {activeTab === 'registrations' && (
+                <button 
+                    onClick={() => setShowStats(!showStats)}
+                    className={`p-2 rounded-lg transition-colors border ${showStats ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-gray-200 text-gray-600'}`}
+                    title="បង្ហាញស្ថិតិ"
+                >
+                    <PieChart className="w-5 h-5" />
+                </button>
+              )}
+              <button 
+                onClick={onLogout}
+                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden md:inline">ចាកចេញ</span>
+              </button>
+          </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="max-w-[1400px] mx-auto px-4 py-8">
         
-        {/* Actions Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-            <div className="relative w-full md:w-96">
-                <input 
-                    type="text"
-                    placeholder="ស្វែងរកឈ្មោះ ឬលេខទូរស័ព្ទ..."
-                    className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                />
-                <Search className="absolute left-3 top-2.5 text-gray-400 w-5 h-5" />
-            </div>
-            
-            <div className="flex gap-3 w-full md:w-auto">
-                <button 
-                    onClick={handleExportCSV}
-                    className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-sm transition-colors font-bold"
-                >
-                    <Download className="w-4 h-4" />
-                    <span>Download Excel</span>
-                </button>
-                
-                <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-200 flex items-center gap-2 whitespace-nowrap">
-                    {isLoading && <Loader2 className="w-5 h-5 animate-spin text-red-500" />}
-                    <span className="text-gray-600 font-bold text-sm">សរុប: <span className="text-red-600 text-lg">{toKhmerNumerals(filteredRegistrations.length)}</span></span>
+        {/* --- USER MANAGEMENT TAB --- */}
+        {activeTab === 'users' && role === 'admin' && (
+            <div>
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-gray-800">System Users</h2>
+                    <button 
+                        onClick={() => setShowAddUserModal(true)}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-bold shadow-md transition-colors"
+                    >
+                        <UserPlus className="w-5 h-5" /> បង្កើត User ថ្មី
+                    </button>
                 </div>
-            </div>
-        </div>
 
-        {/* Filter Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-            <div className="relative">
-                <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
-                    <Filter className="w-4 h-4" />
-                </div>
-                <select 
-                    className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer"
-                    value={filterGender}
-                    onChange={(e) => setFilterGender(e.target.value)}
-                >
-                    <option value="">ភេទ (ទាំងអស់)</option>
-                    <option value="ប្រុស">ប្រុស</option>
-                    <option value="ស្រី">ស្រី</option>
-                </select>
-            </div>
-
-            <div className="relative">
-                <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
-                    <Filter className="w-4 h-4" />
-                </div>
-                <select 
-                    className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer"
-                    value={filterTShirt}
-                    onChange={(e) => setFilterTShirt(e.target.value)}
-                >
-                    <option value="">ទំហំអាវ (ទាំងអស់)</option>
-                    {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-            </div>
-
-            <div className="relative">
-                <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
-                    <Filter className="w-4 h-4" />
-                </div>
-                <select 
-                    className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer"
-                    value={filterStake}
-                    onChange={(e) => {
-                        setFilterStake(e.target.value);
-                        setFilterWard('');
-                    }}
-                >
-                    <option value="">ស្តេក/មណ្ឌល (ទាំងអស់)</option>
-                    {Object.keys(locations).map(k => <option key={k} value={k}>{k}</option>)}
-                </select>
-            </div>
-
-            <div className="relative">
-                <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
-                    <Filter className="w-4 h-4" />
-                </div>
-                <select 
-                    className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer disabled:opacity-50"
-                    value={filterWard}
-                    onChange={(e) => setFilterWard(e.target.value)}
-                    disabled={!filterStake}
-                >
-                    <option value="">វួដ/សាខា (ទាំងអស់)</option>
-                    {filterStake && locations[filterStake] && locations[filterStake].map(w => (
-                        <option key={w} value={w}>{w}</option>
-                    ))}
-                </select>
-            </div>
-        </div>
-
-        {/* Table Container */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex flex-col">
-            <div className="overflow-x-auto">
-                <table className="w-full whitespace-nowrap text-sm text-left">
-                    <thead className="bg-gray-50 text-gray-700 font-bold border-b border-gray-200">
-                        <tr>
-                            <th className="px-4 py-3">No</th>
-                            <th className="px-4 py-3">ឈ្មោះ (ខ្មែរ)</th>
-                            <th className="px-4 py-3">ឈ្មោះ (អង់គ្លេស)</th>
-                            <th className="px-4 py-3">ភេទ</th>
-                            <th className="px-4 py-3">ថ្ងៃកំណើត</th>
-                            <th className="px-4 py-3">ទំហំអាវ</th>
-                            <th className="px-4 py-3">លេខទូរស័ព្ទ</th>
-                            <th className="px-4 py-3">ស្តេក/មណ្ឌល</th>
-                            <th className="px-4 py-3">វួដ/សាខា</th>
-                            <th className="px-4 py-3">លេខកូដសមាជិក</th>
-                            <th className="px-4 py-3">ការបង់ប្រាក់</th>
-                            <th className="px-4 py-3 text-center">Media</th>
-                            <th className="px-4 py-3 text-center">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                        {isLoading ? (
+                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
+                    <table className="w-full text-left">
+                        <thead className="bg-gray-50 text-gray-700 font-bold border-b border-gray-200">
                             <tr>
-                                <td colSpan={13} className="px-4 py-12 text-center text-gray-500">
-                                    <div className="flex flex-col items-center justify-center">
-                                        <Loader2 className="w-8 h-8 animate-spin text-red-500 mb-2" />
-                                        <p>កំពុងទាញយកទិន្នន័យ...</p>
-                                    </div>
-                                </td>
+                                <th className="px-6 py-4">Username</th>
+                                <th className="px-6 py-4">Password</th>
+                                <th className="px-6 py-4">Role</th>
+                                <th className="px-6 py-4">Created At</th>
+                                <th className="px-6 py-4 text-center">Actions</th>
                             </tr>
-                        ) : currentItems.length > 0 ? (
-                            currentItems.map((reg, index) => {
-                                // Calculate global index relative to the FULL filtered list
-                                const globalIndex = indexOfFirstItem + index;
-                                // Count BACKWARDS from the total length (Newest = Highest Number)
-                                // If list has 10 items. Item 0 (Newest) should show 10. Item 1 should show 9.
-                                const displayNumber = filteredRegistrations.length - globalIndex;
-                                const khmerNumber = toKhmerNumerals(displayNumber);
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {/* Master Admin Row (Hardcoded) */}
+                            <tr className="bg-yellow-50/50">
+                                <td className="px-6 py-4 font-bold text-gray-800 flex items-center gap-2">
+                                    <ShieldCheck className="w-4 h-4 text-yellow-600" /> AdminYSACambodia2025
+                                </td>
+                                <td className="px-6 py-4 font-mono text-gray-500">••••••••</td>
+                                <td className="px-6 py-4"><span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold uppercase">Master Admin</span></td>
+                                <td className="px-6 py-4 text-gray-500 text-sm">System Default</td>
+                                <td className="px-6 py-4 text-center text-gray-400 italic text-sm">Cannot Delete</td>
+                            </tr>
+                            
+                            {/* Master Viewer Row (Hardcoded) */}
+                            <tr className="bg-gray-50/50">
+                                <td className="px-6 py-4 font-bold text-gray-800 flex items-center gap-2">
+                                    <Eye className="w-4 h-4 text-gray-600" /> ViewerYSA
+                                </td>
+                                <td className="px-6 py-4 font-mono text-gray-500">••••••••</td>
+                                <td className="px-6 py-4"><span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs font-bold uppercase">Master Viewer</span></td>
+                                <td className="px-6 py-4 text-gray-500 text-sm">System Default</td>
+                                <td className="px-6 py-4 text-center text-gray-400 italic text-sm">Cannot Delete</td>
+                            </tr>
 
-                                return (
-                                <tr key={reg.id} className="hover:bg-gray-50/80 transition-colors">
-                                    <td className="px-4 py-3 text-gray-800 font-bold font-khmer">{khmerNumber}</td>
-                                    <td className="px-4 py-3 font-bold text-gray-800">{reg.fullName}</td>
-                                    <td className="px-4 py-3 text-gray-600">{reg.englishName}</td>
-                                    <td className="px-4 py-3">
-                                        <span className={`px-2 py-1 rounded text-xs font-bold ${reg.gender === 'ប្រុស' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
-                                            {reg.gender}
+                            {/* Dynamic Users */}
+                            {systemUsers.map((user) => (
+                                <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-6 py-4 font-medium text-gray-800">{user.username}</td>
+                                    <td className="px-6 py-4 font-mono text-gray-600">{user.password}</td>
+                                    <td className="px-6 py-4">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${user.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>
+                                            {user.role}
                                         </span>
                                     </td>
-                                    <td className="px-4 py-3 text-gray-600">{reg.dob}</td>
-                                    <td className="px-4 py-3">
-                                        <span className="px-2 py-1 rounded bg-gray-100 text-gray-700 font-bold text-xs border border-gray-200">
-                                            {reg.tShirtSize}
-                                        </span>
-                                    </td>
-                                    <td className="px-4 py-3 font-mono text-gray-600">{reg.phoneNumber}</td>
-                                    <td className="px-4 py-3 text-gray-600">{reg.stake}</td>
-                                    <td className="px-4 py-3 text-gray-600">{reg.ward}</td>
-                                    <td className="px-4 py-3 font-mono text-gray-500 uppercase">{reg.recordNumber || '-'}</td>
-                                    <td className="px-4 py-3">
-                                        {getPaymentLabel(reg.paymentStatus, reg.otherReason)}
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
-                                        {reg.mediaConsent ? (
-                                            <span className="text-green-500 text-xs font-bold border border-green-200 bg-green-50 px-2 py-1 rounded">យល់ព្រម</span>
-                                        ) : (
-                                            <span className="text-red-500 text-xs font-bold">បដិសេធ</span>
-                                        )}
-                                    </td>
-                                    <td className="px-4 py-3 text-center">
-                                        <div className="flex items-center justify-center space-x-2">
-                                            <button 
-                                                onClick={() => handleEditClick(reg)}
-                                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
-                                                title="កែសម្រួល"
-                                            >
-                                                <Edit className="w-4 h-4" />
-                                            </button>
-                                            <button 
-                                                onClick={() => handleDelete(reg.id)}
-                                                className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                title="លុបចោល"
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        </div>
+                                    <td className="px-6 py-4 text-gray-500 text-sm">{new Date(user.createdAt).toLocaleDateString()}</td>
+                                    <td className="px-6 py-4 text-center">
+                                        <button 
+                                            onClick={() => handleDeleteUser(user.id, user.username)}
+                                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                            title="Delete User"
+                                        >
+                                            <Trash2 className="w-5 h-5" />
+                                        </button>
                                     </td>
                                 </tr>
-                            )})
-                        ) : (
-                            <tr>
-                                <td colSpan={13} className="px-4 py-8 text-center text-gray-500">
-                                    មិនមានទិន្នន័យ
-                                </td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
+                            ))}
+                            {systemUsers.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">No additional users created yet.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            
-            {/* Pagination Footer */}
-            {!isLoading && filteredRegistrations.length > 0 && (
-                <div className="border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
-                    <div className="text-sm text-gray-500">
-                        បង្ហាញ {indexOfFirstItem + 1} ទៅ {Math.min(indexOfLastItem, filteredRegistrations.length)} នៃ {filteredRegistrations.length} អ្នក
+        )}
+
+        {/* --- REGISTRATIONS TAB (Default) --- */}
+        {activeTab === 'registrations' && (
+          <>
+            {/* Statistics Section */}
+            {showStats && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    {/* Total Card */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
+                        <div>
+                            <p className="text-gray-500 text-sm font-bold">អ្នកចុះឈ្មោះសរុប</p>
+                            <p className="text-3xl font-bold text-gray-800 mt-1">{stats.total}</p>
+                        </div>
+                        <div className="bg-blue-100 p-3 rounded-full text-blue-600">
+                            <Users className="w-6 h-6" />
+                        </div>
                     </div>
-                    <div className="flex items-center space-x-1">
-                        <button
-                            onClick={() => paginate(currentPage - 1)}
-                            disabled={currentPage === 1}
-                            className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        
-                        <div className="hidden sm:flex space-x-1">
-                            {Array.from({ length: totalPages }, (_, i) => i + 1).map(number => (
-                                <button
-                                    key={number}
-                                    onClick={() => paginate(number)}
-                                    className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
-                                        currentPage === number 
-                                        ? 'bg-red-600 text-white border border-red-600' 
-                                        : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {number}
-                                </button>
+
+                    {/* Gender Card */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                        <p className="text-gray-500 text-sm font-bold mb-2">ភេទ</p>
+                        <div className="flex justify-between items-center">
+                            <div className="text-center">
+                                <span className="block text-xl font-bold text-blue-600">{stats.male}</span>
+                                <span className="text-xs text-gray-500">ប្រុស</span>
+                            </div>
+                            <div className="h-8 w-px bg-gray-200"></div>
+                            <div className="text-center">
+                                <span className="block text-xl font-bold text-pink-600">{stats.female}</span>
+                                <span className="text-xs text-gray-500">ស្រី</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Payment Card */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
+                        <div>
+                            <p className="text-gray-500 text-sm font-bold">ការបង់ប្រាក់</p>
+                            <div className="flex gap-2 mt-1">
+                                <div className="text-center">
+                                    <span className="text-green-600 font-bold text-lg block">{stats.paid}</span>
+                                    <span className="text-[10px] text-gray-500 uppercase">សន្យា</span>
+                                </div>
+                                <div className="w-px bg-gray-200"></div>
+                                <div className="text-center">
+                                    <span className="text-blue-600 font-bold text-lg block">{stats.verifiedPaid}</span>
+                                    <span className="text-[10px] text-gray-500 uppercase">បានបង់</span>
+                                </div>
+                                <div className="w-px bg-gray-200"></div>
+                                <div className="text-center">
+                                    <span className="text-red-500 font-bold text-lg block">{stats.notPaid}</span>
+                                    <span className="text-[10px] text-gray-500 uppercase">មិនទាន់</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="bg-green-100 p-3 rounded-full text-green-600">
+                            <Banknote className="w-6 h-6" />
+                        </div>
+                    </div>
+
+                    {/* T-Shirt Card */}
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
+                        <div className="flex justify-between items-start mb-2">
+                            <p className="text-gray-500 text-sm font-bold">ទំហំអាវ</p>
+                            <Shirt className="w-4 h-4 text-gray-400" />
+                        </div>
+                        <div className="grid grid-cols-6 gap-1 text-center text-xs">
+                            {Object.entries(stats.sizes).map(([size, count]) => (
+                                <div key={size} className="bg-gray-50 rounded p-1">
+                                    <div className="font-bold text-gray-800">{count}</div>
+                                    <div className="text-gray-400 scale-75">{size}</div>
+                                </div>
                             ))}
                         </div>
-
-                        {/* Mobile view simple page indicator */}
-                        <div className="sm:hidden px-2 text-sm font-medium">
-                           {currentPage} / {totalPages}
-                        </div>
-
-                        <button
-                            onClick={() => paginate(currentPage + 1)}
-                            disabled={currentPage === totalPages}
-                            className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <ChevronRight className="w-4 h-4" />
-                        </button>
                     </div>
                 </div>
             )}
-        </div>
+
+            {/* Actions Bar */}
+            <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                <div className="relative w-full md:w-96">
+                    <input 
+                        type="text"
+                        placeholder="ស្វែងរកឈ្មោះ ឬលេខទូរស័ព្ទ..."
+                        className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    <Search className="absolute left-3 top-2.5 text-gray-400 w-5 h-5" />
+                </div>
+                
+                <div className="flex gap-3 w-full md:w-auto">
+                    <button 
+                        onClick={() => setShowPdfModal(true)}
+                        disabled={isGeneratingPdf}
+                        className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-sm transition-colors font-bold disabled:opacity-50"
+                    >
+                        {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                        <span>Export PDF</span>
+                    </button>
+                    <button 
+                        onClick={handleExportExcel}
+                        disabled={isExporting}
+                        className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-sm transition-colors font-bold disabled:opacity-50"
+                    >
+                        {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                        <span>Export Excel</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* Filter Bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <div className="relative">
+                    <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
+                        <Filter className="w-4 h-4" />
+                    </div>
+                    <select 
+                        className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer"
+                        value={filterGender}
+                        onChange={(e) => setFilterGender(e.target.value)}
+                    >
+                        <option value="">ភេទ (ទាំងអស់)</option>
+                        <option value="ប្រុស">ប្រុស</option>
+                        <option value="ស្រី">ស្រី</option>
+                    </select>
+                </div>
+
+                <div className="relative">
+                    <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
+                        <Filter className="w-4 h-4" />
+                    </div>
+                    <select 
+                        className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer"
+                        value={filterTShirt}
+                        onChange={(e) => setFilterTShirt(e.target.value)}
+                    >
+                        <option value="">ទំហំអាវ (ទាំងអស់)</option>
+                        {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                </div>
+
+                <div className="relative">
+                    <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
+                        <Filter className="w-4 h-4" />
+                    </div>
+                    <select 
+                        className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer"
+                        value={filterStake}
+                        onChange={(e) => {
+                            setFilterStake(e.target.value);
+                            setFilterWard('');
+                        }}
+                    >
+                        <option value="">ស្តេក/មណ្ឌល (ទាំងអស់)</option>
+                        {Object.keys(locations).map(k => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                </div>
+
+                <div className="relative">
+                    <div className="absolute left-3 top-2.5 text-gray-400 pointer-events-none">
+                        <Filter className="w-4 h-4" />
+                    </div>
+                    <select 
+                        className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none bg-gray-50 text-sm font-medium text-gray-700 appearance-none cursor-pointer disabled:opacity-50"
+                        value={filterWard}
+                        onChange={(e) => setFilterWard(e.target.value)}
+                        disabled={!filterStake}
+                    >
+                        <option value="">វួដ/សាខា (ទាំងអស់)</option>
+                        {filterStake && locations[filterStake] && locations[filterStake].map(w => (
+                            <option key={w} value={w}>{w}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            {/* Table Container */}
+            <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden flex flex-col">
+                <div className="overflow-x-auto">
+                    <table className="w-full whitespace-nowrap text-sm text-left">
+                        <thead className="bg-red-600 text-white font-bold border-b border-red-700">
+                            <tr>
+                                <th className="px-4 py-3">No</th>
+                                <th className="px-4 py-3">ឈ្មោះ (ខ្មែរ)</th>
+                                <th className="px-4 py-3">ឈ្មោះ (អង់គ្លេស)</th>
+                                <th className="px-4 py-3">ភេទ</th>
+                                <th className="px-4 py-3">ថ្ងៃកំណើត</th>
+                                <th className="px-4 py-3">ទំហំអាវ</th>
+                                <th className="px-4 py-3">លេខទូរស័ព្ទ</th>
+                                <th className="px-4 py-3">ស្តេក/មណ្ឌល</th>
+                                <th className="px-4 py-3">វួដ/សាខា</th>
+                                <th className="px-4 py-3 text-center">លេខកូដសមាជិក</th>
+                                <th className="px-4 py-3">ការបង់ប្រាក់</th>
+                                <th className="px-4 py-3 text-center">Paid</th>
+                                <th className="px-4 py-3 text-center">Media</th>
+                                {role === 'admin' && (
+                                    <th className="px-4 py-3 text-center">Actions</th>
+                                )}
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={role === 'admin' ? 14 : 13} className="px-4 py-12 text-center text-gray-500">
+                                        <div className="flex flex-col items-center justify-center">
+                                            <Loader2 className="w-8 h-8 animate-spin text-red-500 mb-2" />
+                                            <p>កំពុងទាញយកទិន្នន័យ...</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : currentItems.length > 0 ? (
+                                currentItems.map((reg, index) => {
+                                    // Calculate global index relative to the FULL filtered list
+                                    const globalIndex = indexOfFirstItem + index;
+                                    // Numbering 1, 2, 3... based on sort order (Oldest first)
+                                    const displayNumber = globalIndex + 1;
+                                    const khmerNumber = toKhmerNumerals(displayNumber);
+
+                                    return (
+                                    <tr key={reg.id} className="hover:bg-gray-50/80 transition-colors">
+                                        <td className="px-4 py-3 text-gray-800 font-bold font-khmer">{khmerNumber}</td>
+                                        <td className="px-4 py-3 font-bold text-gray-800">{reg.fullName}</td>
+                                        <td className="px-4 py-3 text-gray-600">{reg.englishName}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-1 rounded text-xs font-bold ${reg.gender === 'ប្រុស' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                                                {reg.gender}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-gray-600">{reg.dob}</td>
+                                        <td className="px-4 py-3">
+                                            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700 font-bold text-xs border border-gray-200">
+                                                {reg.tShirtSize}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 font-mono text-gray-600">{reg.phoneNumber}</td>
+                                        <td className="px-4 py-3 text-gray-600">{reg.stake}</td>
+                                        <td className="px-4 py-3 text-gray-600">{reg.ward}</td>
+                                        <td className="px-4 py-3 text-center font-mono text-gray-700">
+                                            {reg.recordNumber || <span className="text-gray-400 italic">-</span>}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            {getPaymentLabel(reg.paymentStatus, reg.otherReason)}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            <button 
+                                                onClick={() => handleTogglePaid(reg)}
+                                                disabled={role !== 'admin'}
+                                                className={`p-1 rounded-full transition-colors ${reg.isPaid ? 'text-green-600 bg-green-50' : 'text-gray-300 hover:text-gray-400'}`}
+                                                title={reg.isPaid ? "Mark as Unpaid" : "Mark as Paid"}
+                                            >
+                                                {reg.isPaid ? <CheckCircle className="w-5 h-5 fill-green-100" /> : <Clock className="w-5 h-5" />}
+                                            </button>
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            {reg.mediaConsent ? (
+                                                <span className="text-green-500 text-xs font-bold border border-green-200 bg-green-50 px-2 py-1 rounded">យល់ព្រម</span>
+                                            ) : (
+                                                <span className="text-red-500 text-xs font-bold">បដិសេធ</span>
+                                            )}
+                                        </td>
+                                        {role === 'admin' && (
+                                            <td className="px-4 py-3 text-center">
+                                                <div className="flex items-center justify-center space-x-2">
+                                                    <button 
+                                                        onClick={() => handleEditClick(reg)}
+                                                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
+                                                        title="កែសម្រួល"
+                                                    >
+                                                        <Edit className="w-4 h-4" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDelete(reg.id)}
+                                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                        title="លុបចោល"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        )}
+                                    </tr>
+                                )})
+                            ) : (
+                                <tr>
+                                    <td colSpan={role === 'admin' ? 14 : 13} className="px-4 py-8 text-center text-gray-500">
+                                        មិនមានទិន្នន័យ
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+                
+                {/* Pagination Footer */}
+                {!isLoading && filteredRegistrations.length > 0 && (
+                    <div className="border-t border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
+                        <div className="text-sm text-gray-500">
+                            បង្ហាញ {indexOfFirstItem + 1} ទៅ {Math.min(indexOfLastItem, filteredRegistrations.length)} នៃ {filteredRegistrations.length} អ្នក
+                        </div>
+                        <div className="flex items-center space-x-1">
+                            <button
+                                onClick={() => paginate(currentPage - 1)}
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            
+                            <div className="hidden sm:flex space-x-1">
+                                {Array.from({ length: totalPages }, (_, i) => i + 1).map(number => (
+                                    <button
+                                        key={number}
+                                        onClick={() => paginate(number)}
+                                        className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                                            currentPage === number 
+                                            ? 'bg-red-600 text-white border border-red-600' 
+                                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        {number}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="sm:hidden px-2 text-sm font-medium">
+                            {currentPage} / {totalPages}
+                            </div>
+
+                            <button
+                                onClick={() => paginate(currentPage + 1)}
+                                disabled={currentPage === totalPages}
+                                className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <ChevronRight className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+          </>
+        )}
       </div>
 
+      {/* PDF Export Modal */}
+      {showPdfModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative animate-bounce-in">
+                  <button onClick={() => setShowPdfModal(false)} className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-full">
+                      <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                  <h3 className="text-xl font-bold font-moul text-gray-800 mb-2 text-center">ជ្រើសរើសទម្រង់ PDF</h3>
+                  <p className="text-center text-gray-500 mb-6">សូមជ្រើសរើសទិសដៅក្រដាសដែលអ្នកចង់ Export</p>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                      <button 
+                        onClick={() => handleExportPDF('portrait')}
+                        className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all group"
+                      >
+                          <div className="w-12 h-16 border-2 border-gray-400 rounded mb-3 bg-white group-hover:border-red-500"></div>
+                          <span className="font-bold text-gray-700 group-hover:text-red-600">បញ្ឈរ (Portrait)</span>
+                      </button>
+                      <button 
+                        onClick={() => handleExportPDF('landscape')}
+                        className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all group"
+                      >
+                          <div className="w-16 h-12 border-2 border-gray-400 rounded mb-3 bg-white group-hover:border-red-500"></div>
+                          <span className="font-bold text-gray-700 group-hover:text-red-600">ផ្តេក (Landscape)</span>
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Edit Modal */}
-      {editingId && editForm && (
+      {editingId && editForm && role === 'admin' && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
                 <div className="sticky top-0 bg-white border-b border-gray-100 p-4 flex justify-between items-center z-10">
@@ -679,6 +1253,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         {editForm.paymentStatus === 'other' && (
                             <input type="text" name="otherReason" value={editForm.otherReason} onChange={handleEditChange} placeholder="Reason" className="w-full mt-2 p-2 border rounded-lg" />
                         )}
+                        
+                        <div className="mt-3 flex items-center gap-2 p-3 bg-blue-50 rounded-lg">
+                             <input type="checkbox" name="isPaid" checked={!!editForm.isPaid} onChange={handleEditChange} className="w-5 h-5 rounded text-blue-600" />
+                             <label className="font-bold text-blue-800">បញ្ជាក់ការបង់ប្រាក់ (Verified Paid)</label>
+                        </div>
                      </div>
 
                      <div className="md:col-span-2">
@@ -699,6 +1278,68 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 </div>
             </div>
         </div>
+      )}
+
+      {/* Add User Modal */}
+      {showAddUserModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                  <div className="p-6 border-b border-gray-100">
+                      <h2 className="text-xl font-bold font-moul text-gray-800">បង្កើត User ថ្មី</h2>
+                  </div>
+                  <form onSubmit={handleAddUser} className="p-6 space-y-4">
+                      <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Username</label>
+                          <input 
+                            type="text" 
+                            className="w-full p-3 rounded-lg border border-gray-300 focus:border-blue-500 outline-none" 
+                            value={newUser.username}
+                            onChange={(e) => setNewUser({...newUser, username: e.target.value})}
+                            required
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Password</label>
+                          <input 
+                            type="text" 
+                            className="w-full p-3 rounded-lg border border-gray-300 focus:border-blue-500 outline-none" 
+                            value={newUser.password}
+                            onChange={(e) => setNewUser({...newUser, password: e.target.value})}
+                            required
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-bold text-gray-700 mb-1">Role</label>
+                          <select 
+                            className="w-full p-3 rounded-lg border border-gray-300 focus:border-blue-500 outline-none"
+                            value={newUser.role}
+                            onChange={(e) => setNewUser({...newUser, role: e.target.value as 'admin' | 'viewer'})}
+                          >
+                              <option value="viewer">Viewer</option>
+                              <option value="admin">Admin</option>
+                          </select>
+                      </div>
+
+                      {userError && <p className="text-red-500 text-sm">{userError}</p>}
+
+                      <div className="flex gap-3 pt-4">
+                          <button 
+                            type="button" 
+                            onClick={() => setShowAddUserModal(false)}
+                            className="flex-1 py-3 rounded-xl border border-gray-300 font-bold text-gray-700 hover:bg-gray-50"
+                          >
+                              បោះបង់
+                          </button>
+                          <button 
+                            type="submit"
+                            className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                          >
+                              បង្កើត
+                          </button>
+                      </div>
+                  </form>
+              </div>
+          </div>
       )}
     </div>
   );

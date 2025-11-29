@@ -15,7 +15,10 @@ import {
   VolumeX,
   Info,
   LockKeyhole,
-  Loader2
+  Loader2,
+  AlertCircle,
+  XCircle,
+  Clock
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
@@ -49,6 +52,58 @@ interface Snowflake {
 interface YsaRegistrationProps {
   onAdminClick?: () => void;
 }
+
+const CountdownTimer = () => {
+  const [timeLeft, setTimeLeft] = useState({
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0
+  });
+
+  useEffect(() => {
+    // Target Date: December 25, 2025
+    const targetDate = new Date('2025-12-25T00:00:00');
+
+    const interval = setInterval(() => {
+      const now = new Date();
+      const difference = targetDate.getTime() - now.getTime();
+
+      if (difference > 0) {
+        setTimeLeft({
+          days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+          hours: Math.floor((difference / (1000 * 60 * 60)) % 24),
+          minutes: Math.floor((difference / 1000 / 60) % 60),
+          seconds: Math.floor((difference / 1000) % 60)
+        });
+      } else {
+        clearInterval(interval);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const TimeUnit = ({ value, label }: { value: number, label: string }) => (
+    <div className="flex flex-col items-center mx-2">
+      <div className="w-16 h-16 md:w-20 md:h-20 bg-white/20 backdrop-blur-md border border-yellow-400/30 rounded-2xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-transform">
+        <span className="text-2xl md:text-4xl font-bold text-white font-mono drop-shadow-md">
+          {value.toString().padStart(2, '0')}
+        </span>
+      </div>
+      <span className="text-yellow-100 text-xs md:text-sm mt-2 font-bold uppercase tracking-wider">{label}</span>
+    </div>
+  );
+
+  return (
+    <div className="flex justify-center flex-wrap gap-2 mb-8 animate-pulse-slow">
+      <TimeUnit value={timeLeft.days} label="ថ្ងៃ" />
+      <TimeUnit value={timeLeft.hours} label="ម៉ោង" />
+      <TimeUnit value={timeLeft.minutes} label="នាទី" />
+      <TimeUnit value={timeLeft.seconds} label="វិនាទី" />
+    </div>
+  );
+};
 
 const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
   // ទិន្នន័យសម្រាប់ ស្តេក/មណ្ឌល និង វួដ/សាខា
@@ -164,6 +219,9 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     
+    // Clear error when user starts typing
+    if (submitError) setSubmitError('');
+
     // Checkbox handling logic
     const checked = (e.target as HTMLInputElement).checked;
 
@@ -212,6 +270,15 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
     }));
   };
 
+  const scrollToError = () => {
+    setTimeout(() => {
+        const el = document.getElementById('error-message-box');
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, 100);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -223,9 +290,9 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
             const selectedYear = new Date(formData.dob).getFullYear();
             if (selectedYear < 1990 || selectedYear > 2007) {
                 const msg = "សូមអភ័យទោស! ការចុះឈ្មោះនេះអនុញ្ញាតសម្រាប់តែអ្នកកើតឆ្នាំ ១៩៩០ ដល់ ២០០៧ ប៉ុណ្ណោះ។";
-                alert(msg);
                 setSubmitError(msg);
                 setIsSubmitting(false);
+                scrollToError();
                 return;
             }
         }
@@ -234,43 +301,61 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
         const cleanPhone = formData.phoneNumber.replace(/\s/g, '');
         if (!/^0\d{7,9}$/.test(cleanPhone)) {
              const msg = "លេខទូរស័ព្ទមិនត្រឹមត្រូវ! សូមបញ្ចូលលេខចាប់ផ្តើមដោយ 0 និងមានចំនួន ៨ ទៅ ១០ ខ្ទង់។";
-             alert(msg);
              setSubmitError(msg);
              setIsSubmitting(false);
+             scrollToError();
              return;
         }
 
         // Validate Membership Record Number (Standard Format: 11 characters total)
+        let cleanRecord = "";
         if (formData.recordNumber) {
-            const cleanRecord = formData.recordNumber.replace(/-/g, '');
+            cleanRecord = formData.recordNumber.replace(/-/g, '');
             // Check if it has exactly 11 characters (alphanumeric)
             if (!/^[A-Z0-9]{11}$/.test(cleanRecord)) {
                 const msg = "លេខកូដសមាជិកមិនត្រឹមត្រូវ! លេខកូដសមាជិកត្រូវមាន ១១ ខ្ទង់ (ឧទាហរណ៍: 000-1234-5678 ឬ A12-34B6-78CD)។";
-                alert(msg);
                 setSubmitError(msg);
                 setIsSubmitting(false);
+                scrollToError();
                 return;
             }
         }
 
         const fullNameTrimmed = formData.fullName.trim();
         const englishNameTrimmed = formData.englishName.trim();
+        const recordNumberTrimmed = formData.recordNumber.trim();
 
-        // 1. Check for Duplicates (Name + English Name)
+        // 1. Check for Duplicates (Name OR Record Number)
         let isDuplicate = false;
+        let duplicateReason = "";
 
         if (db) {
             try {
-                // Check Firestore
-                const q = query(
+                // Check by Name
+                const qName = query(
                     collection(db, "ysa_registrations"),
                     where("fullName", "==", fullNameTrimmed),
                     where("englishName", "==", englishNameTrimmed)
                 );
-                const querySnapshot = await getDocs(q);
-                if (!querySnapshot.empty) {
+                const querySnapshotName = await getDocs(qName);
+                if (!querySnapshotName.empty) {
                     isDuplicate = true;
+                    duplicateReason = `ឈ្មោះ "${fullNameTrimmed}" (${englishNameTrimmed})`;
                 }
+
+                // Check by Record Number (if available)
+                if (!isDuplicate && recordNumberTrimmed) {
+                     const qRecord = query(
+                        collection(db, "ysa_registrations"),
+                        where("recordNumber", "==", recordNumberTrimmed)
+                     );
+                     const querySnapshotRecord = await getDocs(qRecord);
+                     if (!querySnapshotRecord.empty) {
+                         isDuplicate = true;
+                         duplicateReason = `លេខកូដសមាជិក "${recordNumberTrimmed}"`;
+                     }
+                }
+
             } catch (err) {
                  // If permission denied, checking duplicate online might fail, fallback to local later
                  console.warn("Could not check duplicate online:", err);
@@ -280,18 +365,31 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
         // Check Local Storage (Always check as a secondary or primary measure)
         if (!isDuplicate) {
              const localData = JSON.parse(localStorage.getItem('ysa_registrations') || '[]');
-             const existsLocally = localData.some((item: any) => 
+             const existsLocallyName = localData.some((item: any) => 
                 item.fullName.trim() === fullNameTrimmed && 
                 item.englishName.trim() === englishNameTrimmed
              );
-             if (existsLocally) isDuplicate = true;
+             if (existsLocallyName) {
+                 isDuplicate = true;
+                 duplicateReason = `ឈ្មោះ "${fullNameTrimmed}" (${englishNameTrimmed})`;
+             }
+
+             if (!isDuplicate && recordNumberTrimmed) {
+                 const existsLocallyRecord = localData.some((item: any) => 
+                    item.recordNumber === recordNumberTrimmed
+                 );
+                 if (existsLocallyRecord) {
+                    isDuplicate = true;
+                    duplicateReason = `លេខកូដសមាជិក "${recordNumberTrimmed}"`;
+                 }
+             }
         }
 
         if (isDuplicate) {
-            const msg = `ឈ្មោះ "${fullNameTrimmed}" (${englishNameTrimmed}) នេះមានក្នុងប្រព័ន្ធរួចរាល់ហើយ!`;
-            alert(msg);
+            const msg = `សូមអភ័យទោស! ${duplicateReason} នេះមានក្នុងប្រព័ន្ធរួចរាល់ហើយ។`;
             setSubmitError(msg);
             setIsSubmitting(false);
+            scrollToError();
             return; // STOP SUBMISSION
         }
 
@@ -337,8 +435,8 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
 
              if (isDuplicateLocal) {
                 const msg = `ឈ្មោះ "${formData.fullName}" នេះមានក្នុងប្រព័ន្ធរួចរាល់ហើយ!`;
-                alert(msg);
                 setSubmitError(msg);
+                scrollToError();
              } else {
                 localStorage.setItem('ysa_registrations', JSON.stringify([...existingData, { ...formData, id: 'local_' + Date.now(), timestamp: new Date().toISOString() }]));
                 setIsSubmitted(true);
@@ -346,7 +444,9 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
              }
         } else {
              // Only show user-facing error for other types of failures
-             setSubmitError("មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យ។ សូមព្យាយាមម្តងទៀត ឬពិនិត្យមើលការភ្ជាប់អ៊ីនធឺណិត។");
+             const msg = "សូមអភ័យទោស! មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យ។ សូមពិនិត្យមើលអ៊ីនធឺណិតរបស់អ្នក ហើយព្យាយាមម្តងទៀត។";
+             setSubmitError(msg);
+             scrollToError();
         }
     } finally {
         setIsSubmitting(false);
@@ -484,6 +584,8 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
             <Gift className="w-5 h-5 mr-2 text-yellow-400" />
             <span className="font-bold tracking-wide text-yellow-100 uppercase text-sm">Christmas Party 2025</span>
           </div>
+
+          <CountdownTimer />
           
           <h1 className="mb-10 text-white drop-shadow-xl font-khmer tracking-wide">
             <span className="block text-lg md:text-2xl font-bold mb-4 text-yellow-100/90 animate-pulse-slow">
@@ -534,7 +636,7 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                 <div className="p-2 bg-red-100 rounded-lg">
                     <User className="w-6 h-6" />
                 </div>
-                <h3 className="text-xl font-bold font-moul">ព័ត៌មានផ្ទាល់ខ្លួន</h3>
+                <h3 className="text-lg font-bold font-moul">ព័ត៌មានផ្ទាល់ខ្លួន</h3>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -580,7 +682,6 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                     />
                     <Calendar className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
                   </div>
-                  <p className="text-sm text-green-600 font-medium">សម្រាប់អ្នកកើតឆ្នាំ ១៩៩០ ដល់ ២០០៧ ប៉ុណ្ណោះ</p>
                 </div>
 
                 <div className="space-y-2">
@@ -644,7 +745,7 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                 <div className="p-2 bg-green-100 rounded-lg">
                     <MapPin className="w-6 h-6" />
                 </div>
-                <h3 className="text-xl font-bold font-moul">ព័ត៌មានសាសនាចក្រ</h3>
+                <h3 className="text-lg font-bold font-moul">ព័ត៌មានសាសនាចក្រ</h3>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -714,7 +815,7 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
                 <div className="p-2 bg-yellow-100 rounded-lg">
                     <CreditCard className="w-6 h-6" />
                 </div>
-                <h3 className="text-xl font-bold font-moul">ការចូលរួមបង់ថវិកា</h3>
+                <h3 className="text-lg font-bold font-moul">ការចូលរួមបង់ថវិកា</h3>
               </div>
 
               <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 text-base text-yellow-800 mb-4 flex items-start shadow-sm">
@@ -800,8 +901,19 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
 
             {/* Error Message */}
             {submitError && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-center">
-                    {submitError}
+                <div id="error-message-box" className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl flex items-start space-x-3 animate-pulse-once shadow-md">
+                    <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                        <h4 className="font-bold text-red-800 text-base md:text-lg mb-1">មានបញ្ហាបន្តិចបន្តួច!</h4>
+                        <p className="text-red-700 text-sm md:text-base leading-relaxed">{submitError}</p>
+                    </div>
+                    <button 
+                        type="button"
+                        onClick={() => setSubmitError('')} 
+                        className="text-red-400 hover:text-red-600 transition-colors p-1"
+                    >
+                        <XCircle className="w-6 h-6" />
+                    </button>
                 </div>
             )}
 
