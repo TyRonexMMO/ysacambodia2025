@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   LogOut, 
   Trash2, 
@@ -23,7 +23,14 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
-  FileText
+  FileText,
+  Settings,
+  Printer,
+  Columns,
+  Info,
+  Maximize2,
+  Minimize2,
+  RefreshCcw
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { 
@@ -78,6 +85,50 @@ interface AdminDashboardProps {
   onLogout: () => void;
   role: 'admin' | 'viewer';
 }
+
+// PDF Settings Interface
+interface PdfSettings {
+    orientation: 'portrait' | 'landscape';
+    fontSize: number;
+    cellPadding: number;
+    marginTop: number;
+    marginRight: number;
+    marginBottom: number;
+    marginLeft: number;
+}
+
+interface ColumnVisibility {
+    no: boolean;
+    khmerName: boolean;
+    englishName: boolean;
+    gender: boolean;
+    dob: boolean;
+    tShirt: boolean;
+    phone: boolean;
+    stake: boolean;
+    ward: boolean;
+    recordNumber: boolean;
+    paid: boolean;
+    verified: boolean;
+    participation: boolean;
+}
+
+// Default Weights
+const DEFAULT_WEIGHTS: Record<string, number> = {
+    no: 0.5,
+    khmerName: 2.2,
+    englishName: 2.2,
+    gender: 0.7,
+    dob: 1.0,
+    tShirt: 0.6,
+    phone: 1.3,
+    stake: 1.5,
+    ward: 1.5,
+    recordNumber: 1.2,
+    paid: 1.2,
+    verified: 0.5,
+    participation: 0.8
+};
 
 // Reusing locations from main form for editing
 const locations: Record<string, string[]> = {
@@ -156,6 +207,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
   // Notification State
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
+  // PDF Settings State
+  const [pdfSettings, setPdfSettings] = useState<PdfSettings>({
+      orientation: 'landscape',
+      fontSize: 9, 
+      cellPadding: 6,
+      marginTop: 10,
+      marginRight: 10,
+      marginBottom: 10,
+      marginLeft: 10
+  });
+
+  const [columnWeights, setColumnWeights] = useState<Record<string, number>>(DEFAULT_WEIGHTS);
+
+  const [visibleColumns, setVisibleColumns] = useState<ColumnVisibility>({
+      no: true,
+      khmerName: true,
+      englishName: true,
+      gender: true,
+      dob: false,
+      tShirt: true,
+      phone: true,
+      stake: true,
+      ward: true,
+      recordNumber: true,
+      paid: false,
+      verified: false,
+      participation: true
+  });
+
   // Clear notification automatically
   useEffect(() => {
     if (notification) {
@@ -225,19 +305,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
   }, [searchTerm, filterGender, filterTShirt, filterStake, filterWard]);
 
   // Filter registrations
-  const filteredRegistrations = registrations.filter(reg => {
-    const matchesSearch = 
-        reg.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        reg.englishName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        reg.phoneNumber.includes(searchTerm);
-    
-    const matchesGender = filterGender ? reg.gender === filterGender : true;
-    const matchesTShirt = filterTShirt ? reg.tShirtSize === filterTShirt : true;
-    const matchesStake = filterStake ? reg.stake === filterStake : true;
-    const matchesWard = filterWard ? reg.ward === filterWard : true;
+  const filteredRegistrations = useMemo(() => {
+      return registrations.filter(reg => {
+        const matchesSearch = 
+            reg.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            reg.englishName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            reg.phoneNumber.includes(searchTerm);
+        
+        const matchesGender = filterGender ? reg.gender === filterGender : true;
+        const matchesTShirt = filterTShirt ? reg.tShirtSize === filterTShirt : true;
+        const matchesStake = filterStake ? reg.stake === filterStake : true;
+        const matchesWard = filterWard ? reg.ward === filterWard : true;
 
-    return matchesSearch && matchesGender && matchesTShirt && matchesStake && matchesWard;
-  });
+        return matchesSearch && matchesGender && matchesTShirt && matchesStake && matchesWard;
+      });
+  }, [registrations, searchTerm, filterGender, filterTShirt, filterStake, filterWard]);
 
   // Pagination Logic
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -355,19 +437,47 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
     setEditForm(null);
   };
 
-  // --- Export PDF Function ---
-  const handleExportPDF = async (orientation: 'portrait' | 'landscape') => {
+  // --- Export PDF Function with Dynamic Settings ---
+  const handleExportPDF = async () => {
       setIsGeneratingPdf(true);
-      setShowPdfModal(false);
+      
+      // We grab the existing preview content directly
+      const previewElement = document.getElementById('pdf-preview-content');
 
-      if (!window.html2pdf) {
-          console.error("html2pdf library not loaded");
-          setNotification({ message: 'Library html2pdf មិនដំណើរការ សូម Refresh', type: 'error' });
+      if (!window.html2pdf || !previewElement) {
+          console.error("html2pdf library not loaded or preview missing");
+          setNotification({ message: 'បរាជ័យក្នុងការ Export PDF', type: 'error' });
           setIsGeneratingPdf(false);
           return;
       }
 
-      // Determine Filter Description text
+      // Clone the node to clean it up for export (remove any preview-specific styles if needed)
+      // For now, using the preview element content is exactly what we want (WYSIWYG)
+      
+      const opt = {
+          margin: [pdfSettings.marginTop, pdfSettings.marginRight, pdfSettings.marginBottom, pdfSettings.marginLeft], 
+          filename: `YSA_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: pdfSettings.orientation }
+      };
+
+      try {
+          await window.html2pdf().set(opt).from(previewElement).save();
+          setNotification({ message: 'Export PDF ជោគជ័យ!', type: 'success' });
+          setShowPdfModal(false);
+      } catch (err) {
+          console.error("PDF Export Error:", err);
+          setNotification({ message: 'បរាជ័យក្នុងការ Export PDF', type: 'error' });
+      } finally {
+          setIsGeneratingPdf(false);
+      }
+  };
+
+  // Generate Table for Preview/Export
+  const renderPdfTable = (limit?: number) => {
+      const dataToRender = limit ? filteredRegistrations.slice(0, limit) : filteredRegistrations;
+      
       let filterDescription = "អ្នកចូលរួមទាំងអស់";
       if (filterStake) {
           filterDescription = filterStake;
@@ -376,81 +486,100 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
           }
       }
 
-      // Create formatting for the table
-      const rows = filteredRegistrations.map((reg, index) => {
-          return `
-            <tr style="border-bottom: 1px solid #e5e7eb;">
-                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb; font-weight: bold;">${toKhmerNumerals(index + 1)}</td>
-                <td style="padding: 12px 10px; border: 1px solid #e5e7eb; white-space: nowrap; font-weight: bold;">${reg.fullName}</td>
-                <td style="padding: 12px 10px; border: 1px solid #e5e7eb; white-space: nowrap;">${reg.englishName}</td>
-                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">${reg.gender}</td>
-                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">${reg.tShirtSize}</td>
-                <td style="padding: 12px 10px; border: 1px solid #e5e7eb; white-space: nowrap;">${reg.phoneNumber}</td>
-                <td style="padding: 12px 10px; border: 1px solid #e5e7eb;">${reg.stake}</td>
-                <td style="padding: 12px 10px; border: 1px solid #e5e7eb;">${reg.ward}</td>
-                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">${reg.recordNumber ? 'មាន' : 'អត់'}</td>
-                <td style="padding: 12px 10px; text-align: center; border: 1px solid #e5e7eb;">
-                    <div style="width: 16px; height: 16px; border: 1px solid #666; display: inline-block; background: white; border-radius: 2px;"></div>
-                </td>
-            </tr>
-          `;
-      }).join('');
+      const allCols = [
+        { id: 'no', label: 'ល.រ', weight: columnWeights.no, align: 'center', show: visibleColumns.no },
+        { id: 'khmerName', label: 'ឈ្មោះ (ខ្មែរ)', weight: columnWeights.khmerName, align: 'left', show: visibleColumns.khmerName, nowrap: true },
+        { id: 'englishName', label: 'ឈ្មោះ (អង់គ្លេស)', weight: columnWeights.englishName, align: 'left', show: visibleColumns.englishName, nowrap: true },
+        { id: 'gender', label: 'ភេទ', weight: columnWeights.gender, align: 'center', show: visibleColumns.gender },
+        { id: 'dob', label: 'ថ្ងៃកំណើត', weight: columnWeights.dob, align: 'center', show: visibleColumns.dob },
+        { id: 'tShirt', label: 'អាវ', weight: columnWeights.tShirt, align: 'center', show: visibleColumns.tShirt },
+        { id: 'phone', label: 'លេខទូរស័ព្ទ', weight: columnWeights.phone, align: 'left', show: visibleColumns.phone, nowrap: true },
+        { id: 'stake', label: 'ស្តេក/មណ្ឌល', weight: columnWeights.stake, align: 'left', show: visibleColumns.stake },
+        { id: 'ward', label: 'វួដ/សាខា', weight: columnWeights.ward, align: 'left', show: visibleColumns.ward },
+        { id: 'recordNumber', label: 'លេខកូដសមាជិក', weight: columnWeights.recordNumber, align: 'center', show: visibleColumns.recordNumber },
+        { id: 'paid', label: 'ការបង់ប្រាក់', weight: columnWeights.paid, align: 'left', show: visibleColumns.paid },
+        { id: 'verified', label: 'Paid', weight: columnWeights.verified, align: 'center', show: visibleColumns.verified },
+        { id: 'participation', label: 'ការចូលរួម', weight: columnWeights.participation, align: 'center', show: visibleColumns.participation },
+      ];
 
-      // Construct HTML Content with styles matching Dashboard
-      // Added filter description line as requested
-      const content = `
-        <div style="font-family: 'Kantumruy Pro', sans-serif; padding: 10px; width: 100%; box-sizing: border-box;">
-            <div style="text-align: center; margin-bottom: 20px;">
-                <h1 style="font-family: 'Moul', serif; color: #b91c1c; font-size: 22px; margin-bottom: 5px;">បញ្ជីឈ្មោះអ្នកចុះឈ្មោះ YSA 2025</h1>
-                <p style="font-size: 12px; color: #666; margin-bottom: 4px;">កាលបរិច្ឆេទ: ${new Date().toLocaleDateString('km-KH')} | ចំនួនសរុប: ${toKhmerNumerals(filteredRegistrations.length)} នាក់</p>
-                <p style="font-size: 14px; font-weight: bold; color: #333;">របាយការណ៍លទ្ឋផលទិន្នន័យសម្រាប់: ${filterDescription}</p>
+      const activeCols = allCols.filter(c => c.show);
+      const totalWeight = activeCols.reduce((sum, col) => sum + col.weight, 0);
+
+      return (
+        <div id="pdf-preview-content" style={{ fontFamily: "'Kantumruy Pro', sans-serif", width: '100%' }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                <h1 style={{ fontFamily: "'Moul', serif", color: '#b91c1c', fontSize: `${pdfSettings.fontSize + 12}px`, marginBottom: '5px' }}>បញ្ជីឈ្មោះអ្នកចុះឈ្មោះ YSA 2025</h1>
+                <p style={{ fontSize: `${pdfSettings.fontSize + 2}px`, color: '#666', marginBottom: '4px' }}>
+                    កាលបរិច្ឆេទ: {new Date().toLocaleDateString('km-KH')} | ចំនួនសរុប: {toKhmerNumerals(filteredRegistrations.length)} នាក់
+                </p>
+                <p style={{ fontSize: `${pdfSettings.fontSize + 4}px`, fontWeight: 'bold', color: '#333' }}>
+                    របាយការណ៍លទ្ឋផលទិន្នន័យសម្រាប់: {filterDescription}
+                </p>
             </div>
-            <table style="width: 100%; border-collapse: collapse; font-size: 11px; table-layout: auto;">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: `${pdfSettings.fontSize}px`, tableLayout: 'fixed' }}>
                 <thead>
-                    <tr style="background-color: #DC2626; color: white; font-weight: bold;">
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C; width: 30px;">ល.រ</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C; white-space: nowrap;">ឈ្មោះ (ខ្មែរ)</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C; white-space: nowrap;">ឈ្មោះ (អង់គ្លេស)</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">ភេទ</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">អាវ</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">លេខទូរស័ព្ទ</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">ស្តេក/មណ្ឌល</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">វួដ/សាខា</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">លេខកូដសមាជិក</th>
-                        <th style="padding: 12px 10px; border: 1px solid #B91C1C;">ការចូលរួម</th>
+                    <tr style={{ backgroundColor: '#DC2626', color: 'white', fontWeight: 'bold' }}>
+                        {activeCols.map(col => (
+                             <th key={col.id} style={{ 
+                                 padding: `${pdfSettings.cellPadding}px`, 
+                                 border: '1px solid #B91C1C', 
+                                 width: `${(col.weight / totalWeight) * 100}%`,
+                                 whiteSpace: 'nowrap',
+                                 overflow: 'hidden',
+                                 textOverflow: 'ellipsis'
+                            }}>
+                                {col.label}
+                            </th>
+                        ))}
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows}
+                    {dataToRender.map((reg, index) => (
+                        <tr key={reg.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                            {activeCols.map(col => {
+                                let content: React.ReactNode = '';
+                                const nowrapStyle = col.nowrap ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {};
+                                
+                                switch(col.id) {
+                                    case 'no': content = toKhmerNumerals(index + 1); break;
+                                    case 'khmerName': content = reg.fullName; break;
+                                    case 'englishName': content = reg.englishName; break;
+                                    case 'gender': content = reg.gender; break;
+                                    case 'dob': content = reg.dob; break;
+                                    case 'tShirt': content = reg.tShirtSize; break;
+                                    case 'phone': content = reg.phoneNumber; break;
+                                    case 'stake': content = reg.stake; break;
+                                    case 'ward': content = reg.ward; break;
+                                    case 'recordNumber': content = reg.recordNumber ? 'មាន' : 'អត់'; break;
+                                    case 'paid': 
+                                            content = reg.paymentStatus === 'agree' ? 'យល់ព្រម' : 
+                                                    reg.paymentStatus === 'not_affordable' ? 'មិនមានលទ្ឋភាព' : 
+                                                    'ផ្សេងៗ'; 
+                                            break;
+                                    case 'verified': content = reg.isPaid ? 'Yes' : 'No'; break;
+                                    case 'participation': content = <div style={{ width: '14px', height: '14px', border: '1px solid #666', display: 'inline-block', background: 'white', borderRadius: '2px' }}></div>; break;
+                                }
+
+                                return (
+                                    <td key={col.id} style={{ 
+                                        padding: `${pdfSettings.cellPadding}px`, 
+                                        textAlign: col.align as any, 
+                                        border: '1px solid #e5e7eb',
+                                        fontFamily: "'Kantumruy Pro'",
+                                        ...(nowrapStyle as any)
+                                    }}>
+                                        {content}
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    ))}
+                    {/* Add blank rows to fill page visual if needed for preview feel, optional */}
                 </tbody>
             </table>
         </div>
-      `;
-
-      // Create a temporary container
-      const element = document.createElement('div');
-      element.innerHTML = content;
-      document.body.appendChild(element);
-
-      const opt = {
-          margin: [5, 5, 5, 5], 
-          filename: `YSA_Registration_List_${new Date().toISOString().split('T')[0]}.pdf`,
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true, letterRendering: true },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: orientation }
-      };
-
-      try {
-          await window.html2pdf().set(opt).from(element).save();
-          setNotification({ message: 'Export PDF ជោគជ័យ!', type: 'success' });
-      } catch (err) {
-          console.error("PDF Export Error:", err);
-          setNotification({ message: 'បរាជ័យក្នុងការ Export PDF', type: 'error' });
-      } finally {
-          document.body.removeChild(element);
-          setIsGeneratingPdf(false);
-      }
-  };
+      );
+  }
 
   // --- Export Excel Function with Formatting ---
   const handleExportExcel = async () => {
@@ -476,7 +605,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
             { header: 'លេខទូរស័ព្ទ', key: 'phoneNumber', width: 15 },
             { header: 'ស្តេក/មណ្ឌល', key: 'stake', width: 20 },
             { header: 'វួដ/សាខា', key: 'ward', width: 20 },
-            { header: 'លេខកូដសមាជិក', key: 'recordNumber', width: 20 }, // Increased width for full number
+            { header: 'លេខកូដសមាជិក', key: 'recordNumber', width: 20 },
             { header: 'ការបង់ប្រាក់', key: 'payment', width: 20 },
             { header: 'Status', key: 'verified', width: 15 },
             { header: 'Media', key: 'media', width: 10 },
@@ -499,7 +628,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
                 phoneNumber: reg.phoneNumber,
                 stake: reg.stake,
                 ward: reg.ward,
-                recordNumber: reg.recordNumber || '', // Show full number
+                recordNumber: reg.recordNumber || '', 
                 payment: paymentText,
                 verified: reg.isPaid ? 'Paid' : 'Unpaid',
                 media: reg.mediaConsent ? 'Yes' : 'No',
@@ -900,7 +1029,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
                         disabled={isGeneratingPdf}
                         className="flex-1 md:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-sm transition-colors font-bold disabled:opacity-50"
                     >
-                        {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                        {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
                         <span>Export PDF</span>
                     </button>
                     <button 
@@ -1147,31 +1276,203 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
         )}
       </div>
 
-      {/* PDF Export Modal */}
+      {/* PDF Export Settings Modal (New Split View) */}
       {showPdfModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative animate-bounce-in">
-                  <button onClick={() => setShowPdfModal(false)} className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-full">
-                      <X className="w-5 h-5 text-gray-500" />
-                  </button>
-                  <h3 className="text-xl font-bold font-moul text-gray-800 mb-2 text-center">ជ្រើសរើសទម្រង់ PDF</h3>
-                  <p className="text-center text-gray-500 mb-6">សូមជ្រើសរើសទិសដៅក្រដាសដែលអ្នកចង់ Export</p>
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] h-[90vh] flex flex-col overflow-hidden">
                   
-                  <div className="grid grid-cols-2 gap-4">
-                      <button 
-                        onClick={() => handleExportPDF('portrait')}
-                        className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all group"
-                      >
-                          <div className="w-12 h-16 border-2 border-gray-400 rounded mb-3 bg-white group-hover:border-red-500"></div>
-                          <span className="font-bold text-gray-700 group-hover:text-red-600">បញ្ឈរ (Portrait)</span>
-                      </button>
-                      <button 
-                        onClick={() => handleExportPDF('landscape')}
-                        className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all group"
-                      >
-                          <div className="w-16 h-12 border-2 border-gray-400 rounded mb-3 bg-white group-hover:border-red-500"></div>
-                          <span className="font-bold text-gray-700 group-hover:text-red-600">ផ្តេក (Landscape)</span>
-                      </button>
+                  {/* Modal Header */}
+                  <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-white z-10">
+                      <div className="flex items-center gap-3">
+                          <div className="bg-red-100 p-2 rounded-lg text-red-600">
+                              <Printer className="w-6 h-6" />
+                          </div>
+                          <div>
+                              <h3 className="text-xl font-bold font-moul text-gray-800">Export PDF Studio</h3>
+                              <p className="text-xs text-gray-500">Live Preview & Custom Layout</p>
+                          </div>
+                      </div>
+                      <div className="flex gap-3">
+                         <button 
+                            onClick={() => setColumnWeights(DEFAULT_WEIGHTS)}
+                            className="text-xs flex items-center gap-1 text-gray-500 hover:text-blue-600 px-3 py-1 rounded bg-gray-100 hover:bg-blue-50 transition-colors"
+                         >
+                            <RefreshCcw className="w-3 h-3" /> Reset Layout
+                         </button>
+                         <button onClick={() => setShowPdfModal(false)} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors">
+                              <X className="w-6 h-6" />
+                          </button>
+                      </div>
+                  </div>
+                  
+                  <div className="flex flex-1 overflow-hidden">
+                      {/* LEFT PANEL: Settings */}
+                      <div className="w-1/3 min-w-[320px] max-w-[400px] border-r border-gray-200 bg-gray-50 overflow-y-auto custom-scrollbar p-6 flex flex-col gap-6">
+                          
+                          {/* 1. Page Settings */}
+                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
+                                    <Settings className="w-4 h-4 text-blue-500" /> Page Settings
+                                </h4>
+                                
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-500 mb-2 block">ORIENTATION</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button 
+                                                onClick={() => setPdfSettings({...pdfSettings, orientation: 'portrait'})}
+                                                className={`py-2 px-3 rounded-lg text-sm font-medium border transition-all ${pdfSettings.orientation === 'portrait' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                                            >
+                                                Portrait
+                                            </button>
+                                            <button 
+                                                onClick={() => setPdfSettings({...pdfSettings, orientation: 'landscape'})}
+                                                className={`py-2 px-3 rounded-lg text-sm font-medium border transition-all ${pdfSettings.orientation === 'landscape' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                                            >
+                                                Landscape
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500 mb-1 block">FONT SIZE</label>
+                                            <input 
+                                                type="number" 
+                                                value={pdfSettings.fontSize}
+                                                onChange={(e) => setPdfSettings({...pdfSettings, fontSize: Number(e.target.value)})}
+                                                className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500 mb-1 block">PADDING</label>
+                                            <input 
+                                                type="number" 
+                                                value={pdfSettings.cellPadding}
+                                                onChange={(e) => setPdfSettings({...pdfSettings, cellPadding: Number(e.target.value)})}
+                                                className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                          </div>
+
+                          {/* 2. Column Management */}
+                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex-1">
+                                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
+                                    <Columns className="w-4 h-4 text-blue-500" /> Column Widths
+                                </h4>
+                                <p className="text-xs text-gray-500 mb-4 bg-blue-50 p-2 rounded border border-blue-100">
+                                    ទាញគ្រាប់រំកិលដើម្បីកែតម្រូវទំហំជួរឈរ។ ដកគ្រីសចេញបើមិនចង់បង្ហាញ។
+                                </p>
+
+                                <div className="space-y-1">
+                                    {[
+                                      { key: 'no', label: 'ល.រ (No)' },
+                                      { key: 'khmerName', label: 'ឈ្មោះ (ខ្មែរ)' },
+                                      { key: 'englishName', label: 'ឈ្មោះ (អង់គ្លេស)' },
+                                      { key: 'gender', label: 'ភេទ' },
+                                      { key: 'dob', label: 'ថ្ងៃកំណើត' },
+                                      { key: 'tShirt', label: 'ទំហំអាវ' },
+                                      { key: 'phone', label: 'លេខទូរស័ព្ទ' },
+                                      { key: 'stake', label: 'ស្តេក/មណ្ឌល' },
+                                      { key: 'ward', label: 'វួដ/សាខា' },
+                                      { key: 'recordNumber', label: 'លេខកូដសមាជិក' },
+                                      { key: 'paid', label: 'ស្ថានភាពបង់ប្រាក់' },
+                                      { key: 'verified', label: 'Paid Verification' },
+                                      { key: 'participation', label: 'ប្រអប់វត្តមាន' },
+                                    ].map((col) => (
+                                        <div key={col.key} className={`p-3 rounded-lg border transition-all ${ (visibleColumns as any)[col.key] ? 'border-gray-200 bg-white' : 'border-transparent bg-gray-50 opacity-60' }`}>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <input 
+                                                        type="checkbox"
+                                                        checked={(visibleColumns as any)[col.key]}
+                                                        onChange={(e) => setVisibleColumns({...visibleColumns, [col.key]: e.target.checked})}
+                                                        className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
+                                                    />
+                                                    <span className="text-sm font-bold text-gray-700">{col.label}</span>
+                                                </div>
+                                                {(visibleColumns as any)[col.key] && (
+                                                    <span className="text-xs font-mono text-gray-400">
+                                                        {columnWeights[col.key]?.toFixed(1) || '1.0'}x
+                                                    </span>
+                                                )}
+                                            </div>
+                                            
+                                            {(visibleColumns as any)[col.key] && (
+                                                <input 
+                                                    type="range"
+                                                    min="0.2"
+                                                    max="5.0"
+                                                    step="0.1"
+                                                    value={columnWeights[col.key] || 1}
+                                                    onChange={(e) => setColumnWeights({
+                                                        ...columnWeights,
+                                                        [col.key]: parseFloat(e.target.value)
+                                                    })}
+                                                    className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-600"
+                                                />
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                          </div>
+                      </div>
+
+                      {/* RIGHT PANEL: Preview */}
+                      <div className="flex-1 bg-gray-200 flex flex-col overflow-hidden relative">
+                          <div className="absolute top-4 right-4 z-10 bg-black/70 text-white text-xs px-3 py-1 rounded-full backdrop-blur">
+                              Live Preview
+                          </div>
+                          
+                          {/* Paper Container - Scrollable */}
+                          <div className="flex-1 overflow-auto p-8 flex justify-center items-start">
+                              <div 
+                                className="bg-white shadow-xl transition-all duration-300 origin-top"
+                                style={{
+                                    // A4 Aspect Ratio Simulation
+                                    width: pdfSettings.orientation === 'portrait' ? '210mm' : '297mm',
+                                    minHeight: pdfSettings.orientation === 'portrait' ? '297mm' : '210mm',
+                                    paddingTop: `${pdfSettings.marginTop}mm`,
+                                    paddingRight: `${pdfSettings.marginRight}mm`,
+                                    paddingBottom: `${pdfSettings.marginBottom}mm`,
+                                    paddingLeft: `${pdfSettings.marginLeft}mm`,
+                                    transform: 'scale(0.85)', // Slight zoom out to fit screen better
+                                }}
+                              >
+                                  {/* RENDER THE ACTUAL TABLE HERE */}
+                                  {renderPdfTable(15)} {/* Show first 15 rows for preview performance */}
+                                  
+                                  <div className="mt-4 text-center text-xs text-gray-400 italic p-4 border-t border-dashed">
+                                      --- Preview truncated to 15 records for performance ---
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="p-4 border-t border-gray-200 bg-white flex justify-between items-center z-10">
+                      <div className="text-sm text-gray-500">
+                          {filteredRegistrations.length} records ready to export.
+                      </div>
+                      <div className="flex gap-3">
+                          <button 
+                              onClick={() => setShowPdfModal(false)}
+                              className="px-6 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-bold hover:bg-gray-100 transition-colors"
+                          >
+                              បោះបង់
+                          </button>
+                          <button 
+                              onClick={handleExportPDF}
+                              disabled={isGeneratingPdf}
+                              className="px-8 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-colors flex items-center gap-2 shadow-lg shadow-red-200"
+                          >
+                              {isGeneratingPdf ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                              Download PDF
+                          </button>
+                      </div>
                   </div>
               </div>
           </div>
