@@ -18,7 +18,9 @@ import {
   Loader2,
   AlertCircle,
   XCircle,
-  Clock
+  Clock,
+  Ban,
+  AlertTriangle
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
@@ -173,7 +175,11 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
   const [wards, setWards] = useState<string[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [dateLimits, setDateLimits] = useState({ min: '', max: '' });
+  const [isRegistrationFull, setIsRegistrationFull] = useState(false);
+  const [isLoadingCheck, setIsLoadingCheck] = useState(true);
+  
   const audioRef = useRef<HTMLAudioElement>(null);
+  const REGISTRATION_LIMIT = 250;
 
   // Set specific Date Limits (1990 - 2007)
   useEffect(() => {
@@ -181,6 +187,36 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
       min: '1990-01-01',
       max: '2007-12-31'
     });
+  }, []);
+
+  // Check Registration Limit on Mount
+  useEffect(() => {
+    const checkLimit = async () => {
+        setIsLoadingCheck(true);
+        try {
+            let count = 0;
+            if (db) {
+                // Get count from Firebase
+                const snapshot = await getDocs(collection(db, "ysa_registrations"));
+                count = snapshot.size;
+            } else {
+                // Get count from LocalStorage
+                const localData = JSON.parse(localStorage.getItem('ysa_registrations') || '[]');
+                count = localData.length;
+            }
+
+            if (count >= REGISTRATION_LIMIT) {
+                setIsRegistrationFull(true);
+            }
+        } catch (error) {
+            console.error("Error checking limit:", error);
+            // Fallback: If error, we default to open, or you could fail closed.
+            // For better UX, we'll let it stay open unless we are sure it's full.
+        } finally {
+            setIsLoadingCheck(false);
+        }
+    };
+    checkLimit();
   }, []);
 
   // Update wards when stake changes
@@ -285,6 +321,13 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Safety check just in case user bypassed UI
+    if (isRegistrationFull) {
+        setSubmitError("ការចុះឈ្មោះបានពេញចំនួនហើយ។");
+        return;
+    }
+
     setIsSubmitting(true);
     setSubmitError('');
     
@@ -513,15 +556,13 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
           
           <button 
             onClick={() => {
-              setIsSubmitted(false);
-              setFormData({
-                fullName: '', englishName: '', dob: '', gender: '', tShirtSize: '', phoneNumber: '', 
-                stake: '', ward: '', recordNumber: '', mediaConsent: false, paymentStatus: '', otherReason: ''
-              });
+              // Reload page or reset form - but since user registered, they shouldn't register again ideally.
+              // For UX simplicity:
+              window.location.reload();
             }}
             className="w-full py-4 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl font-bold text-lg hover:shadow-xl hover:shadow-green-500/30 transform transition hover:-translate-y-1 active:scale-95 font-khmer"
           >
-            ចុះឈ្មោះម្នាក់ទៀត
+            ត្រឡប់ទៅទំព័រដើម
           </button>
         </div>
       </div>
@@ -623,328 +664,363 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
 
       {/* Main Form Container */}
       <div className="max-w-3xl mx-auto px-4 -mt-20 pb-20 relative z-20">
-        <form onSubmit={handleSubmit} className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] overflow-hidden border-2 border-yellow-500/30">
-          
-          {/* Decorative Top Bar */}
-          <div className="h-3 bg-gradient-to-r from-green-600 via-red-600 to-green-600 flex justify-between items-center px-2">
-            {[...Array(20)].map((_, i) => (
-                <div key={i} className="w-2 h-2 rounded-full bg-yellow-400 shadow-[0_0_5px_rgba(250,204,21,0.8)]"></div>
-            ))}
-          </div>
-
-          <div className="p-6 md:p-10 space-y-8">
-            
-            {/* Section 1: ព័ត៌មានផ្ទាល់ខ្លួន */}
-            <section className="space-y-6">
-              <div className="flex items-center space-x-3 text-red-700 mb-2 border-b-2 border-red-100 pb-2">
-                <div className="p-2 bg-red-100 rounded-lg">
-                    <User className="w-6 h-6" />
-                </div>
-                <h3 className="text-lg font-bold font-moul">ព័ត៌មានផ្ទាល់ខ្លួន</h3>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="block text-gray-800 font-bold text-base md:text-lg">ឈ្មោះពេញ (ភាសាខ្មែរ) <span className="text-red-500">*</span></label>
-                  <input 
-                    type="text" 
-                    name="fullName"
-                    required
-                    className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
-                    placeholder="វាយបានតែភាសាខ្មែរ..."
-                    value={formData.fullName}
-                    onChange={handleChange}
-                  />
-                   <p className="text-sm text-red-400 italic">អនុញ្ញាតតែអក្សរខ្មែរប៉ុណ្ណោះ</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-gray-800 font-bold text-base md:text-lg">ឈ្មោះពេញ (ភាសាអង់គ្លេស) <span className="text-red-500">*</span></label>
-                  <input 
-                    type="text" 
-                    name="englishName"
-                    required
-                    className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
-                    placeholder="Full Name (English)"
-                    value={formData.englishName}
-                    onChange={handleChange}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-gray-800 font-bold text-base md:text-lg">ថ្ងៃខែឆ្នាំកំណើត <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <input 
-                      type="date" 
-                      name="dob"
-                      required
-                      min={dateLimits.min}
-                      max={dateLimits.max}
-                      className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all pl-10 text-gray-700"
-                      value={formData.dob}
-                      onChange={handleChange}
-                    />
-                    <Calendar className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-gray-800 font-bold text-base md:text-lg">ភេទ <span className="text-red-500">*</span></label>
-                  <select 
-                    name="gender" 
-                    required
-                    className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
-                    value={formData.gender}
-                    onChange={handleChange}
-                  >
-                    <option value="">ជ្រើសរើសភេទ</option>
-                    <option value="ប្រុស">ប្រុស</option>
-                    <option value="ស្រី">ស្រី</option>
-                  </select>
-                </div>
-
-                 <div className="space-y-2">
-                  <label className="block text-gray-800 font-bold text-base md:text-lg">ទំហំអាវ (T-Shirt Size) <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <select 
-                        name="tShirtSize" 
-                        required
-                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all pl-10"
-                        value={formData.tShirtSize}
-                        onChange={handleChange}
-                    >
-                        <option value="">ជ្រើសរើសទំហំ</option>
-                        <option value="XS">XS</option>
-                        <option value="S">S</option>
-                        <option value="M">M</option>
-                        <option value="L">L</option>
-                        <option value="XL">XL</option>
-                        <option value="XXL">XXL</option>
-                    </select>
-                    <Shirt className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
-                  </div>
-                </div>
-
-                <div className="space-y-2 md:col-span-1">
-                  <label className="block text-gray-800 font-bold text-base md:text-lg">លេខទូរស័ព្ទ <span className="text-red-500">*</span></label>
-                   <div className="relative">
-                    <input 
-                        type="tel" 
-                        name="phoneNumber"
-                        required
-                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all pl-10"
-                        placeholder="012 345 678"
-                        value={formData.phoneNumber}
-                        onChange={handleChange}
-                    />
-                    <Phone className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* Section 2: ព័ត៌មានសាសនាចក្រ */}
-            <section className="space-y-6">
-              <div className="flex items-center space-x-3 text-green-700 mb-2 border-b-2 border-green-100 pb-2">
-                <div className="p-2 bg-green-100 rounded-lg">
-                    <MapPin className="w-6 h-6" />
-                </div>
-                <h3 className="text-lg font-bold font-moul">ព័ត៌មានសាសនាចក្រ</h3>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                    <label className="block text-gray-800 font-bold text-base md:text-lg">ស្តេក ឬ មណ្ឌល <span className="text-red-500">*</span></label>
-                    <select 
-                        name="stake" 
-                        required
-                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all"
-                        value={formData.stake}
-                        onChange={handleChange}
-                    >
-                        <option value="">ជ្រើសរើសស្តេក/មណ្ឌល</option>
-                        {Object.keys(locations).map((stake, index) => (
-                        <option key={index} value={stake}>{stake}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div className="space-y-2">
-                    <label className="block text-gray-800 font-bold text-base md:text-lg">វួដ ឬ សាខា <span className="text-red-500">*</span></label>
-                    <select 
-                        name="ward" 
-                        required
-                        disabled={!formData.stake}
-                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all disabled:opacity-50 disabled:bg-gray-100"
-                        value={formData.ward}
-                        onChange={handleChange}
-                    >
-                        <option value="">
-                            {formData.stake ? "ជ្រើសរើសវួដ/សាខា" : "សូមជ្រើសរើសស្តេកជាមុន"}
-                        </option>
-                        {wards.map((ward, index) => (
-                        <option key={index} value={ward}>{ward}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <div className="flex items-center gap-2">
-                    <label className="block text-gray-800 font-bold text-base md:text-lg">លេខកូដសមាជិក (Membership Record Number)</label>
-                    <div className="relative group">
-                        <Info className="w-5 h-5 text-blue-500 cursor-help" />
-                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-3 bg-gray-900/90 backdrop-blur text-white text-sm rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none text-center">
-                            លេខនេះជួយបញ្ជាក់អត្តសញ្ញាណសមាជិកភាពរបស់អ្នក។ អ្នកអាចរកវាបានក្នុងកម្មវិធី Member Tools ឬសាកសួរស្មៀនវួដ។
-                            <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-8 border-transparent border-t-gray-900/90"></div>
-                        </div>
+        
+        {/* Conditional Rendering: Loading, Full, or Form */}
+        {isLoadingCheck ? (
+            <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-xl p-10 flex flex-col items-center justify-center min-h-[400px]">
+                <Loader2 className="w-12 h-12 text-red-600 animate-spin mb-4" />
+                <p className="text-gray-600 font-bold">កំពុងពិនិត្យចំនួនអ្នកចុះឈ្មោះ...</p>
+            </div>
+        ) : isRegistrationFull ? (
+             /* Registration Closed Message */
+             <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] overflow-hidden border-2 border-red-500/30">
+                <div className="h-3 bg-gradient-to-r from-gray-500 via-gray-600 to-gray-500 flex justify-between items-center px-2"></div>
+                <div className="p-8 md:p-12 text-center">
+                    <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6 ring-4 ring-red-50">
+                        <Ban className="w-12 h-12 text-red-600" />
                     </div>
-                  </div>
-                  <input 
-                    type="text" 
-                    name="recordNumber"
-                    maxLength={13}
-                    className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all uppercase"
-                    placeholder="000-123A-BC56"
-                    value={formData.recordNumber}
-                    onChange={handleChange}
-                  />
-                  <p className="text-sm text-gray-400 italic">អនុញ្ញាតបញ្ចូលលេខ និងអក្សរ (ប្រព័ន្ធនឹងដាក់សញ្ញា - ដោយស្វ័យប្រវត្តិ)</p>
-                </div>
-              </div>
-            </section>
-
-             {/* Section 3: ការបង់ប្រាក់ */}
-             <section className="space-y-6">
-              <div className="flex items-center space-x-3 text-yellow-600 mb-2 border-b-2 border-yellow-100 pb-2">
-                <div className="p-2 bg-yellow-100 rounded-lg">
-                    <CreditCard className="w-6 h-6" />
-                </div>
-                <h3 className="text-lg font-bold font-moul">ការចូលរួមបង់ថវិកា</h3>
-              </div>
-
-              <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 text-base text-yellow-800 mb-4 flex items-start shadow-sm">
-                 <Heart className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0 text-red-500 fill-red-500" />
-                 <span>ថវិកាចូលរួម: <strong>២០,០០០ រៀល</strong>។ សូមបង់ទៅកាន់អ្នកតំណាងតាមស្តេក/មណ្ឌល ឬ វួដ/សាខារបស់បងប្អូន។</span>
-              </div>
-
-              <div className="space-y-3">
-                <label className="flex items-center space-x-3 p-3 border border-gray-200 rounded-xl cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 transition-colors group">
-                    <input 
-                        type="radio" 
-                        name="paymentStatus" 
-                        value="agree"
-                        required
-                        className="w-5 h-5 text-red-600 focus:ring-red-500 border-gray-300"
-                        onChange={handleChange}
-                        checked={formData.paymentStatus === 'agree'}
-                    />
-                    <span className="text-gray-800 font-bold text-base md:text-lg group-hover:text-yellow-800">ខ្ញុំយល់ព្រមបង់ (២០,០០០ រៀល)</span>
-                </label>
-
-                <label className="flex items-center space-x-3 p-3 border border-gray-200 rounded-xl cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 transition-colors group">
-                    <input 
-                        type="radio" 
-                        name="paymentStatus" 
-                        value="not_affordable"
-                        className="w-5 h-5 text-red-600 focus:ring-red-500 border-gray-300"
-                        onChange={handleChange}
-                        checked={formData.paymentStatus === 'not_affordable'}
-                    />
-                    <span className="text-gray-800 font-bold text-base md:text-lg group-hover:text-yellow-800">មិនទាន់មានលទ្ឋភាព</span>
-                </label>
-
-                <label className="flex items-center space-x-3 p-3 border border-gray-200 rounded-xl cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 transition-colors group">
-                    <input 
-                        type="radio" 
-                        name="paymentStatus" 
-                        value="other"
-                        className="w-5 h-5 text-red-600 focus:ring-red-500 border-gray-300"
-                        onChange={handleChange}
-                        checked={formData.paymentStatus === 'other'}
-                    />
-                    <span className="text-gray-800 font-bold text-base md:text-lg group-hover:text-yellow-800">ហេតុផលផ្សេងៗ (Optional)</span>
-                </label>
-
-                {formData.paymentStatus === 'other' && (
-                    <textarea 
-                        name="otherReason"
-                        className="w-full mt-2 p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:border-yellow-400 focus:ring-4 focus:ring-yellow-400/10 outline-none text-base"
-                        placeholder="សូមបញ្ជាក់ហេតុផល..."
-                        rows={2}
-                        value={formData.otherReason}
-                        onChange={handleChange}
-                    ></textarea>
-                )}
-              </div>
-            </section>
-
-            {/* Section 4: ការយល់ព្រម */}
-            <section className="bg-gray-50 rounded-2xl p-6 border border-gray-200">
-                <div className="flex items-start space-x-4">
-                    <div className="mt-1">
-                        <Camera className="w-6 h-6 text-gray-500" />
-                    </div>
-                    <div className="space-y-4">
-                        <p className="text-base text-gray-700 leading-relaxed">
-                            ដើម្បីជាការចងចាំ និងផ្សព្វផ្សាយដំណឹងល្អ យើងខ្ញុំសូមការអនុញ្ញាតក្នុងការថតរូប និងវីដេអូអំឡុងពេលកម្មវិធី ដើម្បីផុសនៅលើផេកសាសនាចក្រនៃព្រះយេស៊ូវគ្រីស្ទនៃពួកបរិសុទ្ឋថ្ងៃចុងក្រោយ និងផេក YSA Cambodia។
+                    <h2 className="text-3xl md:text-4xl font-moul text-red-700 mb-6 leading-relaxed">
+                        ការចុះឈ្មោះត្រូវបានបិទ
+                    </h2>
+                    <div className="bg-red-50 border border-red-200 rounded-2xl p-6 md:p-8 mb-8">
+                        <p className="text-gray-700 text-lg md:text-xl leading-loose font-khmer">
+                            ការចុះឈ្មោះចូលរួមត្រូវបានបិទបញ្ចប់ជាស្ថាពរ ដែលគ្រប់ចំនួន <span className="font-bold text-red-600 text-2xl">២៥០ នាក់</span>។
                         </p>
-                        <label className="flex items-center space-x-3 cursor-pointer select-none group">
-                            <input 
-                                type="checkbox" 
-                                name="mediaConsent"
-                                required
-                                className="w-6 h-6 rounded border-gray-300 text-red-600 focus:ring-red-500 transition-colors"
-                                checked={formData.mediaConsent}
-                                onChange={handleChange}
-                            />
-                            <span className="text-gray-800 font-bold text-base md:text-lg">ខ្ញុំយល់ព្រម និងអនុញ្ញាត</span>
-                        </label>
+                        <p className="text-gray-700 text-lg md:text-xl leading-loose font-khmer mt-4">
+                            សូមអរគុណសម្រាប់ការចាប់អារម្មណ៍នៅក្នុងការចុះឈ្មោះ។ បើសិនជាមានជាចម្ងល់ផ្សេងៗ ឬព័ត៌មានបន្ថែម សូមទាក់ទងទៅកាន់អ្នកតំណាង តាមស្តេក ឬមណ្ឌលរបស់បងប្អូនបាន។
+                        </p>
+                    </div>
+                    <div className="flex justify-center">
+                        <AlertTriangle className="w-6 h-6 text-yellow-500 mr-2" />
+                        <span className="text-gray-500 text-sm">សូមអរគុណសម្រាប់ការយោគយល់</span>
                     </div>
                 </div>
-            </section>
-
-            {/* Error Message */}
-            {submitError && (
-                <div id="error-message-box" className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl flex items-start space-x-3 animate-pulse-once shadow-md">
-                    <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                        <h4 className="font-bold text-red-800 text-base md:text-lg mb-1">មានបញ្ហាបន្តិចបន្តួច!</h4>
-                        <p className="text-red-700 text-sm md:text-base leading-relaxed">{submitError}</p>
-                    </div>
-                    <button 
-                        type="button"
-                        onClick={() => setSubmitError('')} 
-                        className="text-red-400 hover:text-red-600 transition-colors p-1"
-                    >
-                        <XCircle className="w-6 h-6" />
-                    </button>
-                </div>
-            )}
-
-            {/* Submit Button */}
-            <div className="pt-4">
-                <button 
-                    type="submit" 
-                    disabled={isSubmitting}
-                    className="w-full py-4 bg-gradient-to-r from-red-600 via-red-700 to-red-600 text-white rounded-xl text-xl font-bold shadow-lg shadow-red-500/30 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 flex items-center justify-center space-x-2 group border border-red-500 disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                    {isSubmitting ? (
-                        <>
-                            <Loader2 className="w-6 h-6 animate-spin" />
-                            <span>កំពុងបញ្ជូន...</span>
-                        </>
-                    ) : (
-                        <>
-                            <Gift className="w-6 h-6 group-hover:animate-bounce" />
-                            <span>ចុះឈ្មោះឥឡូវនេះ</span>
-                        </>
-                    )}
-                </button>
-                <p className="text-center text-sm text-gray-500 mt-4">ការចុះឈ្មោះរបស់អ្នកនឹងត្រូវបានរក្សាទុកដោយសុវត្ថិភាព</p>
+             </div>
+        ) : (
+            /* Registration Form */
+            <form onSubmit={handleSubmit} className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] overflow-hidden border-2 border-yellow-500/30">
+            
+            {/* Decorative Top Bar */}
+            <div className="h-3 bg-gradient-to-r from-green-600 via-red-600 to-green-600 flex justify-between items-center px-2">
+                {[...Array(20)].map((_, i) => (
+                    <div key={i} className="w-2 h-2 rounded-full bg-yellow-400 shadow-[0_0_5px_rgba(250,204,21,0.8)]"></div>
+                ))}
             </div>
 
-          </div>
-        </form>
+            <div className="p-6 md:p-10 space-y-8">
+                
+                {/* Section 1: ព័ត៌មានផ្ទាល់ខ្លួន */}
+                <section className="space-y-6">
+                <div className="flex items-center space-x-3 text-red-700 mb-2 border-b-2 border-red-100 pb-2">
+                    <div className="p-2 bg-red-100 rounded-lg">
+                        <User className="w-6 h-6" />
+                    </div>
+                    <h3 className="text-lg font-bold font-moul">ព័ត៌មានផ្ទាល់ខ្លួន</h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                    <label className="block text-gray-800 font-bold text-base md:text-lg">ឈ្មោះពេញ (ភាសាខ្មែរ) <span className="text-red-500">*</span></label>
+                    <input 
+                        type="text" 
+                        name="fullName"
+                        required
+                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
+                        placeholder="វាយបានតែភាសាខ្មែរ..."
+                        value={formData.fullName}
+                        onChange={handleChange}
+                    />
+                    <p className="text-sm text-red-400 italic">អនុញ្ញាតតែអក្សរខ្មែរប៉ុណ្ណោះ</p>
+                    </div>
+
+                    <div className="space-y-2">
+                    <label className="block text-gray-800 font-bold text-base md:text-lg">ឈ្មោះពេញ (ភាសាអង់គ្លេស) <span className="text-red-500">*</span></label>
+                    <input 
+                        type="text" 
+                        name="englishName"
+                        required
+                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
+                        placeholder="Full Name (English)"
+                        value={formData.englishName}
+                        onChange={handleChange}
+                    />
+                    </div>
+
+                    <div className="space-y-2">
+                    <label className="block text-gray-800 font-bold text-base md:text-lg">ថ្ងៃខែឆ្នាំកំណើត <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                        <input 
+                        type="date" 
+                        name="dob"
+                        required
+                        min={dateLimits.min}
+                        max={dateLimits.max}
+                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all pl-10 text-gray-700"
+                        value={formData.dob}
+                        onChange={handleChange}
+                        />
+                        <Calendar className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
+                    </div>
+                    </div>
+
+                    <div className="space-y-2">
+                    <label className="block text-gray-800 font-bold text-base md:text-lg">ភេទ <span className="text-red-500">*</span></label>
+                    <select 
+                        name="gender" 
+                        required
+                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
+                        value={formData.gender}
+                        onChange={handleChange}
+                    >
+                        <option value="">ជ្រើសរើសភេទ</option>
+                        <option value="ប្រុស">ប្រុស</option>
+                        <option value="ស្រី">ស្រី</option>
+                    </select>
+                    </div>
+
+                    <div className="space-y-2">
+                    <label className="block text-gray-800 font-bold text-base md:text-lg">ទំហំអាវ (T-Shirt Size) <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                        <select 
+                            name="tShirtSize" 
+                            required
+                            className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all pl-10"
+                            value={formData.tShirtSize}
+                            onChange={handleChange}
+                        >
+                            <option value="">ជ្រើសរើសទំហំ</option>
+                            <option value="XS">XS</option>
+                            <option value="S">S</option>
+                            <option value="M">M</option>
+                            <option value="L">L</option>
+                            <option value="XL">XL</option>
+                            <option value="XXL">XXL</option>
+                        </select>
+                        <Shirt className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
+                    </div>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-1">
+                    <label className="block text-gray-800 font-bold text-base md:text-lg">លេខទូរស័ព្ទ <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                        <input 
+                            type="tel" 
+                            name="phoneNumber"
+                            required
+                            className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-red-500 focus:ring-4 focus:ring-red-500/10 outline-none transition-all pl-10"
+                            placeholder="012 345 678"
+                            value={formData.phoneNumber}
+                            onChange={handleChange}
+                        />
+                        <Phone className="absolute left-3 top-3.5 text-red-400 w-5 h-5" />
+                    </div>
+                    </div>
+                </div>
+                </section>
+
+                {/* Section 2: ព័ត៌មានសាសនាចក្រ */}
+                <section className="space-y-6">
+                <div className="flex items-center space-x-3 text-green-700 mb-2 border-b-2 border-green-100 pb-2">
+                    <div className="p-2 bg-green-100 rounded-lg">
+                        <MapPin className="w-6 h-6" />
+                    </div>
+                    <h3 className="text-lg font-bold font-moul">ព័ត៌មានសាសនាចក្រ</h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                        <label className="block text-gray-800 font-bold text-base md:text-lg">ស្តេក ឬ មណ្ឌល <span className="text-red-500">*</span></label>
+                        <select 
+                            name="stake" 
+                            required
+                            className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all"
+                            value={formData.stake}
+                            onChange={handleChange}
+                        >
+                            <option value="">ជ្រើសរើសស្តេក/មណ្ឌល</option>
+                            {Object.keys(locations).map((stake, index) => (
+                            <option key={index} value={stake}>{stake}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="block text-gray-800 font-bold text-base md:text-lg">វួដ ឬ សាខា <span className="text-red-500">*</span></label>
+                        <select 
+                            name="ward" 
+                            required
+                            disabled={!formData.stake}
+                            className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all disabled:opacity-50 disabled:bg-gray-100"
+                            value={formData.ward}
+                            onChange={handleChange}
+                        >
+                            <option value="">
+                                {formData.stake ? "ជ្រើសរើសវួដ/សាខា" : "សូមជ្រើសរើសស្តេកជាមុន"}
+                            </option>
+                            {wards.map((ward, index) => (
+                            <option key={index} value={ward}>{ward}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                    <div className="flex items-center gap-2">
+                        <label className="block text-gray-800 font-bold text-base md:text-lg">លេខកូដសមាជិក (Membership Record Number)</label>
+                        <div className="relative group">
+                            <Info className="w-5 h-5 text-blue-500 cursor-help" />
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-3 bg-gray-900/90 backdrop-blur text-white text-sm rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none text-center">
+                                លេខនេះជួយបញ្ជាក់អត្តសញ្ញាណសមាជិកភាពរបស់អ្នក។ អ្នកអាចរកវាបានក្នុងកម្មវិធី Member Tools ឬសាកសួរស្មៀនវួដ។
+                                <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-8 border-transparent border-t-gray-900/90"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <input 
+                        type="text" 
+                        name="recordNumber"
+                        maxLength={13}
+                        className="w-full px-4 py-3 text-base md:text-lg rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-500/10 outline-none transition-all uppercase"
+                        placeholder="000-123A-BC56"
+                        value={formData.recordNumber}
+                        onChange={handleChange}
+                    />
+                    <p className="text-sm text-gray-400 italic">អនុញ្ញាតបញ្ចូលលេខ និងអក្សរ (ប្រព័ន្ធនឹងដាក់សញ្ញា - ដោយស្វ័យប្រវត្តិ)</p>
+                    </div>
+                </div>
+                </section>
+
+                {/* Section 3: ការបង់ប្រាក់ */}
+                <section className="space-y-6">
+                <div className="flex items-center space-x-3 text-yellow-600 mb-2 border-b-2 border-yellow-100 pb-2">
+                    <div className="p-2 bg-yellow-100 rounded-lg">
+                        <CreditCard className="w-6 h-6" />
+                    </div>
+                    <h3 className="text-lg font-bold font-moul">ការចូលរួមបង់ថវិកា</h3>
+                </div>
+
+                <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 text-base text-yellow-800 mb-4 flex items-start shadow-sm">
+                    <Heart className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0 text-red-500 fill-red-500" />
+                    <span>ថវិកាចូលរួម: <strong>២០,០០០ រៀល</strong>។ សូមបង់ទៅកាន់អ្នកតំណាងតាមស្តេក/មណ្ឌល ឬ វួដ/សាខារបស់បងប្អូន។</span>
+                </div>
+
+                <div className="space-y-3">
+                    <label className="flex items-center space-x-3 p-3 border border-gray-200 rounded-xl cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 transition-colors group">
+                        <input 
+                            type="radio" 
+                            name="paymentStatus" 
+                            value="agree"
+                            required
+                            className="w-5 h-5 text-red-600 focus:ring-red-500 border-gray-300"
+                            onChange={handleChange}
+                            checked={formData.paymentStatus === 'agree'}
+                        />
+                        <span className="text-gray-800 font-bold text-base md:text-lg group-hover:text-yellow-800">ខ្ញុំយល់ព្រមបង់ (២០,០០០ រៀល)</span>
+                    </label>
+
+                    <label className="flex items-center space-x-3 p-3 border border-gray-200 rounded-xl cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 transition-colors group">
+                        <input 
+                            type="radio" 
+                            name="paymentStatus" 
+                            value="not_affordable"
+                            className="w-5 h-5 text-red-600 focus:ring-red-500 border-gray-300"
+                            onChange={handleChange}
+                            checked={formData.paymentStatus === 'not_affordable'}
+                        />
+                        <span className="text-gray-800 font-bold text-base md:text-lg group-hover:text-yellow-800">មិនទាន់មានលទ្ឋភាព</span>
+                    </label>
+
+                    <label className="flex items-center space-x-3 p-3 border border-gray-200 rounded-xl cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 transition-colors group">
+                        <input 
+                            type="radio" 
+                            name="paymentStatus" 
+                            value="other"
+                            className="w-5 h-5 text-red-600 focus:ring-red-500 border-gray-300"
+                            onChange={handleChange}
+                            checked={formData.paymentStatus === 'other'}
+                        />
+                        <span className="text-gray-800 font-bold text-base md:text-lg group-hover:text-yellow-800">ហេតុផលផ្សេងៗ (Optional)</span>
+                    </label>
+
+                    {formData.paymentStatus === 'other' && (
+                        <textarea 
+                            name="otherReason"
+                            className="w-full mt-2 p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:border-yellow-400 focus:ring-4 focus:ring-yellow-400/10 outline-none text-base"
+                            placeholder="សូមបញ្ជាក់ហេតុផល..."
+                            rows={2}
+                            value={formData.otherReason}
+                            onChange={handleChange}
+                        ></textarea>
+                    )}
+                </div>
+                </section>
+
+                {/* Section 4: ការយល់ព្រម */}
+                <section className="bg-gray-50 rounded-2xl p-6 border border-gray-200">
+                    <div className="flex items-start space-x-4">
+                        <div className="mt-1">
+                            <Camera className="w-6 h-6 text-gray-500" />
+                        </div>
+                        <div className="space-y-4">
+                            <p className="text-base text-gray-700 leading-relaxed">
+                                ដើម្បីជាការចងចាំ និងផ្សព្វផ្សាយដំណឹងល្អ យើងខ្ញុំសូមការអនុញ្ញាតក្នុងការថតរូប និងវីដេអូអំឡុងពេលកម្មវិធី ដើម្បីផុសនៅលើផេកសាសនាចក្រនៃព្រះយេស៊ូវគ្រីស្ទនៃពួកបរិសុទ្ឋថ្ងៃចុងក្រោយ និងផេក YSA Cambodia។
+                            </p>
+                            <label className="flex items-center space-x-3 cursor-pointer select-none group">
+                                <input 
+                                    type="checkbox" 
+                                    name="mediaConsent"
+                                    required
+                                    className="w-6 h-6 rounded border-gray-300 text-red-600 focus:ring-red-500 transition-colors"
+                                    checked={formData.mediaConsent}
+                                    onChange={handleChange}
+                                />
+                                <span className="text-gray-800 font-bold text-base md:text-lg">ខ្ញុំយល់ព្រម និងអនុញ្ញាត</span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                {/* Error Message */}
+                {submitError && (
+                    <div id="error-message-box" className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl flex items-start space-x-3 animate-pulse-once shadow-md">
+                        <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                            <h4 className="font-bold text-red-800 text-base md:text-lg mb-1">មានបញ្ហាបន្តិចបន្តួច!</h4>
+                            <p className="text-red-700 text-sm md:text-base leading-relaxed">{submitError}</p>
+                        </div>
+                        <button 
+                            type="button"
+                            onClick={() => setSubmitError('')} 
+                            className="text-red-400 hover:text-red-600 transition-colors p-1"
+                        >
+                            <XCircle className="w-6 h-6" />
+                        </button>
+                    </div>
+                )}
+
+                {/* Submit Button */}
+                <div className="pt-4">
+                    <button 
+                        type="submit" 
+                        disabled={isSubmitting}
+                        className="w-full py-4 bg-gradient-to-r from-red-600 via-red-700 to-red-600 text-white rounded-xl text-xl font-bold shadow-lg shadow-red-500/30 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 flex items-center justify-center space-x-2 group border border-red-500 disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                        {isSubmitting ? (
+                            <>
+                                <Loader2 className="w-6 h-6 animate-spin" />
+                                <span>កំពុងបញ្ជូន...</span>
+                            </>
+                        ) : (
+                            <>
+                                <Gift className="w-6 h-6 group-hover:animate-bounce" />
+                                <span>ចុះឈ្មោះឥឡូវនេះ</span>
+                            </>
+                        )}
+                    </button>
+                    <p className="text-center text-sm text-gray-500 mt-4">ការចុះឈ្មោះរបស់អ្នកនឹងត្រូវបានរក្សាទុកដោយសុវត្ថិភាព</p>
+                </div>
+
+            </div>
+            </form>
+        )}
       </div>
       
       {/* Footer Decoration */}
