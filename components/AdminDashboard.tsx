@@ -598,105 +598,200 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
         const workbook = new window.ExcelJS.Workbook();
         const sheet = workbook.addWorksheet('YSA 2025 Registrations');
 
-        // Define Columns with Widths
+        // Define Columns with Specific Widths (Based on request)
         sheet.columns = [
-            { header: 'No', key: 'no', width: 8 },
-            { header: 'ឈ្មោះ (ខ្មែរ)', key: 'fullName', width: 25 },
-            { header: 'ឈ្មោះ (អង់គ្លេស)', key: 'englishName', width: 25 },
-            { header: 'ភេទ', key: 'gender', width: 10 },
-            { header: 'ថ្ងៃកំណើត', key: 'dob', width: 15 },
-            { header: 'ទំហំអាវ', key: 'tShirtSize', width: 10 },
-            { header: 'លេខទូរស័ព្ទ', key: 'phoneNumber', width: 15 },
-            { header: 'ស្តេក/មណ្ឌល', key: 'stake', width: 20 },
-            { header: 'វួដ/សាខា', key: 'ward', width: 20 },
-            { header: 'លេខកូដសមាជិក', key: 'recordNumber', width: 20 },
-            { header: 'ការបង់ប្រាក់', key: 'payment', width: 20 },
-            { header: 'Status', key: 'verified', width: 15 },
-            { header: 'Media', key: 'media', width: 10 },
-            { header: 'Timestamp', key: 'timestamp', width: 25 },
+            { key: 'no', width: 3.43 },          // ល.រ (29px)
+            { key: 'fullName', width: 20.57 },    // ឈ្មោះខ្មែរ (149px)
+            { key: 'englishName', width: 21.48 }, // ឈ្មោះអង់គ្លេស (158px)
+            { key: 'gender', width: 4.45 },       // ភេទ (36px)
+            { key: 'dob', width: 12.86 },         // ថ្ងៃកំណើត (95px)
+            { key: 'tShirtSize', width: 6.71 },   // ទំហំអាវ (52px)
+            { key: 'phoneNumber', width: 11.71 }, // លេខទូរស័ព្ទ (36px - Note: seems small for phone but following request)
+            { key: 'ward', width: 18.14 },        // វួដ/សាខា (132px)
+            { key: 'recordNumber', width: 16.43 },// លេខកូដសមាជិក (120px)
+            { key: 'payment', width: 21.14 },     // ការបង់ប្រាក់ (153px)
+            { key: 'participation', width: 9.00 } // ការចូលរួម (68px)
         ];
 
-        // Add Data Rows
+        // --- Custom Headers Implementation ---
+        
+        // 1. Determine Filter Text and Header Color
+        const contextText = filterStake 
+            ? `${filterStake}${filterWard ? ` (${filterWard})` : ''}` 
+            : "អ្នកចូលរួមសរុបគ្រប់តាមស្តេក និងមណ្ឌល";
+
+        // Stake Color Map (ARGB)
+        const stakeColors: Record<string, string> = {
+            "ស្តេកខាងត្បូង": 'FF3270AA',
+            "ស្តេកខាងជើង": 'FFCD9620',
+            "មណ្ឌលខាងកើត": 'FFC23433',
+            "មណ្ឌលកំពង់ចាម និង កំពង់ធំ": 'FFDC771C',
+            "មណ្ឌលបាត់ដំបង": 'FF863CA9',
+            "មណ្ឌលសៀមរាប": 'FF3D9251'
+        };
+
+        const headerColor = filterStake ? (stakeColors[filterStake] || 'FFDC2626') : 'FFDC2626';
+
+        // 2. Insert Custom Title Rows
+        
+        // D1-L1: Title Line 1 -> Now A1:K1
+        sheet.mergeCells('A1:K1');
+        const title1 = sheet.getCell('A1');
+        title1.value = "តារាងបញ្ជីចុះឈ្មោះក្នុងកម្មវិធីដំណើរកម្សាន្តទៅកាន់";
+        title1.alignment = { vertical: 'bottom', horizontal: 'center' };
+        title1.font = { name: 'Moul', size: 12, bold: true, color: { argb: 'FFDC2626' } };
+
+        // D2-L2: Title Line 2 -> Now A2:K2
+        sheet.mergeCells('A2:K2');
+        const title2 = sheet.getCell('A2');
+        title2.value = "រមណីយដ្ឋានវីគិរីរម្យ";
+        title2.alignment = { vertical: 'middle', horizontal: 'center' };
+        title2.font = { name: 'Moul', size: 14, bold: true, color: { argb: 'FFDC2626' } };
+
+        // D3-L3: Title Line 3 -> Now A3:K3
+        sheet.mergeCells('A3:K3');
+        const title3 = sheet.getCell('A3');
+        title3.value = "សម្រាប់យុវមជ្ឈិមវ័យនៅលីវទូទាំងប្រទេសកម្ពុជា ប្រចាំឆ្នាំ ២០២៥";
+        title3.alignment = { vertical: 'top', horizontal: 'center' };
+        title3.font = { name: 'Kantumruy Pro', size: 11, bold: true };
+
+        // D4-L4: Filter Context -> Now A4:K4
+        sheet.mergeCells('A4:K4');
+        const contextCell = sheet.getCell('A4');
+        contextCell.value = `របាយការទិន្នន័យអ្នកចូលរួម: ${contextText}`;
+        contextCell.alignment = { vertical: 'middle', horizontal: 'center' };
+        contextCell.font = { name: 'Kantumruy Pro', size: 11, italic: true, color: { argb: 'FF555555' } };
+
+        // 3. Add Table Header Row (Row 6)
+        const tableHeaderRowIndex = 6;
+        const headerRow = sheet.getRow(tableHeaderRowIndex);
+        headerRow.values = [
+            'ល.រ', 'ឈ្មោះ (ខ្មែរ)', 'ឈ្មោះ (អង់គ្លេស)', 'ភេទ', 'ថ្ងៃកំណើត', 
+            'ទំហំអាវ', 'លេខទូរស័ព្ទ', 'វួដ/សាខា', 
+            'លេខកូដសមាជិក', 'ការបង់ប្រាក់', 'ការចូលរួម'
+        ];
+        
+        // 4. Add Data Rows
         filteredRegistrations.forEach((reg, index) => {
             const paymentText = reg.paymentStatus === 'agree' ? 'យល់ព្រម' : 
                                 reg.paymentStatus === 'not_affordable' ? 'មិនមានលទ្ឋភាព' : 
                                 reg.otherReason || 'ផ្សេងៗ';
 
             sheet.addRow({
-                no: index + 1,
+                no: toKhmerNumerals(index + 1),
                 fullName: reg.fullName,
                 englishName: reg.englishName,
                 gender: reg.gender,
                 dob: reg.dob,
                 tShirtSize: reg.tShirtSize,
                 phoneNumber: reg.phoneNumber,
-                stake: reg.stake,
                 ward: reg.ward,
                 recordNumber: reg.recordNumber || '', 
                 payment: paymentText,
-                verified: reg.isPaid ? 'Paid' : 'Unpaid',
-                media: reg.mediaConsent ? 'Yes' : 'No',
-                timestamp: new Date(reg.timestamp).toLocaleString()
+                participation: '☐' // Empty checkbox symbol
             });
         });
 
-        // Apply Styling
-        // 1. Header Styling
-        const headerRow = sheet.getRow(1);
-        headerRow.font = { name: 'Kantumruy Pro', family: 4, size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+        // 5. Styling
+        
+        // Style Header Row
+        headerRow.font = { name: 'Kantumruy Pro', family: 4, size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
         headerRow.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: 'FFDC2626' } // Red background matches admin header
+            fgColor: { argb: headerColor } // Dynamic Color
         };
         headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
         headerRow.height = 30;
 
-        // 2. Content Styling
+        // Style Content Rows
         sheet.eachRow((row: any, rowNumber: number) => {
-            if (rowNumber > 1) { // Skip header
-                row.font = { name: 'Kantumruy Pro', family: 4, size: 11 };
+            if (rowNumber > tableHeaderRowIndex) { 
+                row.height = 30; // Set specific height for data rows (approx 40px)
+                
+                // Default alignment
                 row.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
                 
-                // Zebra Striping for readability
+                // Specific Fonts per Column
+                row.getCell(1).font = { name: 'Battambang', size: 10 }; // No
+                row.getCell(2).font = { name: 'Battambang', size: 10 }; // Khmer Name
+                row.getCell(3).font = { name: 'Times New Roman', size: 12 }; // English Name
+                row.getCell(4).font = { name: 'Battambang', size: 10 }; // Gender
+                row.getCell(5).font = { name: 'Battambang', size: 11 }; // DOB
+                row.getCell(6).font = { name: 'Battambang', size: 10 }; // T-Shirt
+                row.getCell(7).font = { name: 'Battambang', size: 10 }; // Phone
+                row.getCell(8).font = { name: 'Battambang', size: 10 }; // Ward
+                row.getCell(9).font = { name: 'Battambang', size: 10 }; // Record
+                row.getCell(10).font = { name: 'Battambang', size: 10 }; // Payment
+                row.getCell(11).font = { name: 'Battambang', size: 10 }; // Participation
+
+                // Zebra Striping
                 if (rowNumber % 2 === 0) {
                      row.fill = {
                         type: 'pattern',
                         pattern: 'solid',
-                        fgColor: { argb: 'FFF9FAFB' } // Light gray
+                        fgColor: { argb: 'FFF9FAFB' }
                     };
                 }
 
-                // Center align specific columns
-                const centerCols = [1, 4, 5, 6, 12, 13];
+                // Center align specific columns (No, Gender, DOB, T-Shirt, Phone, Participation)
+                const centerCols = [1, 4, 5, 6, 7, 11];
                 centerCols.forEach(colIdx => {
                     const cell = row.getCell(colIdx);
                     cell.alignment = { vertical: 'middle', horizontal: 'center' };
                 });
 
-                // Style "Record Number" column (Column 10) - just center align, no specific color
-                const recordCell = row.getCell(10);
+                // Record Number Center
+                const recordCell = row.getCell(9);
                 recordCell.alignment = { vertical: 'middle', horizontal: 'center' };
-
-                // Style "Paid" status (Column 12)
-                const paidCell = row.getCell(12);
-                if (paidCell.value === 'Paid') {
-                    paidCell.font = { name: 'Kantumruy Pro', color: { argb: 'FF16A34A' }, bold: true }; // Green
-                } else {
-                    paidCell.font = { name: 'Kantumruy Pro', color: { argb: 'FFDC2626' } }; // Red
-                }
+                
+                // Participation Checkbox bigger font
+                const checkCell = row.getCell(11);
+                checkCell.font = { name: 'Battambang', size: 14 };
             }
 
-            // Borders for all cells
-            row.eachCell((cell: any) => {
-                cell.border = {
-                    top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-                    left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-                    bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-                    right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
-                };
-            });
+            // Borders for table part only
+            if (rowNumber >= tableHeaderRowIndex) {
+                row.eachCell((cell: any) => {
+                    cell.border = {
+                        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                        left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                        right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+                    };
+                });
+            }
         });
+
+        // 6. Footer Statistics (Based on filteredRegistrations)
+        // Calculate dynamic stats from the currently filtered data
+        const exportTotal = filteredRegistrations.length;
+        const exportMale = filteredRegistrations.filter(r => r.gender === 'ប្រុស').length;
+        const exportFemale = filteredRegistrations.filter(r => r.gender === 'ស្រី').length;
+
+        const footerStartRow = tableHeaderRowIndex + filteredRegistrations.length + 2;
+        
+        // Total All
+        const totalRow = sheet.getRow(footerStartRow);
+        sheet.mergeCells(`A${footerStartRow}:C${footerStartRow}`);
+        totalRow.getCell(1).value = `សរុបមជ្ឈិមវ័យដែលបានចុះឈ្មោះ: ${toKhmerNumerals(exportTotal)} នាក់`;
+        totalRow.getCell(1).font = { name: 'Kantumruy Pro', size: 11, bold: true };
+        totalRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+
+        // Total Male
+        const maleRow = sheet.getRow(footerStartRow + 1);
+        sheet.mergeCells(`A${footerStartRow + 1}:C${footerStartRow + 1}`);
+        maleRow.getCell(1).value = `សរុបមជ្ឈិមវ័យ (ប្រុស): ${toKhmerNumerals(exportMale)} នាក់`;
+        maleRow.getCell(1).font = { name: 'Kantumruy Pro', size: 11, bold: true, color: { argb: 'FF2563EB' } };
+        maleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+
+        // Total Female
+        const femaleRow = sheet.getRow(footerStartRow + 2);
+        sheet.mergeCells(`A${footerStartRow + 2}:C${footerStartRow + 2}`);
+        femaleRow.getCell(1).value = `សរុបមជ្ឈិមវ័យ (ស្រី): ${toKhmerNumerals(exportFemale)} នាក់`;
+        femaleRow.getCell(1).font = { name: 'Kantumruy Pro', size: 11, bold: true, color: { argb: 'FFDB2777' } };
+        femaleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+
 
         // Generate and Download
         const buffer = await workbook.xlsx.writeBuffer();
