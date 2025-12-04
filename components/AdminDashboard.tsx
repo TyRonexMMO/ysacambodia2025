@@ -30,7 +30,9 @@ import {
   Info,
   Maximize2,
   Minimize2,
-  RefreshCcw
+  RefreshCcw,
+  Power,
+  MessageSquare
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { 
@@ -43,7 +45,9 @@ import {
     orderBy,
     addDoc,
     where,
-    getDocs
+    getDocs,
+    setDoc,
+    getDoc
 } from 'firebase/firestore';
 
 // Extend window interface to include ExcelJS and html2pdf loaded from CDN
@@ -79,6 +83,11 @@ interface SystemUser {
   password: string; // Note: In production, this should be hashed. Using plain text for simple demo.
   role: 'admin' | 'viewer';
   createdAt: string;
+}
+
+interface AppConfig {
+  isRegistrationOpen: boolean;
+  maintenanceMessage: string;
 }
 
 interface AdminDashboardProps {
@@ -208,6 +217,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'viewer' });
   const [userError, setUserError] = useState('');
 
+  // System Settings State
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [appConfig, setAppConfig] = useState<AppConfig>({
+      isRegistrationOpen: true,
+      maintenanceMessage: "សូមបន្តធ្វើការរង់ចាំ ប្រព័ន្ឋចុះឈ្មោះកំពុងត្រួតពិនិត្យ និងបើកដំណើរការចុះឈ្មោះម្តងទៀត"
+  });
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+
   // Notification State
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
@@ -255,6 +272,31 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
     const khmerNums = ['០', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
     return num.toString().split('').map(n => khmerNums[parseInt(n)]).join('');
   };
+
+  // Fetch App Config
+  useEffect(() => {
+    const fetchConfig = async () => {
+        if (!db) {
+            // Local fallback
+            const localConfig = localStorage.getItem('ysa_config');
+            if (localConfig) {
+                setAppConfig(JSON.parse(localConfig));
+            }
+            return;
+        }
+
+        try {
+            const docRef = doc(db, "ysa_config", "general");
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                setAppConfig(docSnap.data() as AppConfig);
+            }
+        } catch (error) {
+            console.error("Error fetching config:", error);
+        }
+    };
+    fetchConfig();
+  }, []);
 
   // Fetch Registrations
   useEffect(() => {
@@ -439,6 +481,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
   const handleCancelEdit = () => {
     setEditingId(null);
     setEditForm(null);
+  };
+
+  // --- System Configuration Logic ---
+  const handleSaveConfig = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsSavingConfig(true);
+      
+      try {
+          if (db) {
+              await setDoc(doc(db, "ysa_config", "general"), appConfig);
+          } else {
+              localStorage.setItem('ysa_config', JSON.stringify(appConfig));
+          }
+          setNotification({ message: 'ការកំណត់ត្រូវបានរក្សាទុកដោយជោគជ័យ', type: 'success' });
+          setShowSettingsModal(false);
+      } catch (error) {
+          console.error("Error saving config:", error);
+          setNotification({ message: 'មានបញ្ហាក្នុងការរក្សាទុកការកំណត់', type: 'error' });
+      } finally {
+          setIsSavingConfig(false);
+      }
   };
 
   // --- Export PDF Function with Dynamic Settings ---
@@ -929,6 +992,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
           )}
           
           <div className="flex items-center gap-3">
+              {role === 'admin' && (
+                  <button 
+                      onClick={() => setShowSettingsModal(true)}
+                      className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
+                      title="ការកំណត់ប្រព័ន្ធ"
+                  >
+                      <Settings className="w-5 h-5" />
+                  </button>
+              )}
+
               {activeTab === 'registrations' && (
                 <button 
                     onClick={() => setShowStats(!showStats)}
@@ -1374,6 +1447,87 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, role }) => {
           </>
         )}
       </div>
+
+      {/* System Settings Modal */}
+      {showSettingsModal && role === 'admin' && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-bounce-in">
+                  <div className="bg-gradient-to-r from-gray-800 to-gray-900 px-6 py-4 flex justify-between items-center">
+                      <h2 className="text-xl font-bold font-moul text-white flex items-center gap-2">
+                          <Settings className="w-6 h-6 text-yellow-500" /> ការកំណត់ប្រព័ន្ធ
+                      </h2>
+                      <button onClick={() => setShowSettingsModal(false)} className="p-2 hover:bg-white/10 rounded-full text-white/70 hover:text-white transition-colors">
+                          <X className="w-5 h-5" />
+                      </button>
+                  </div>
+                  
+                  <form onSubmit={handleSaveConfig} className="p-6">
+                      <div className="mb-6">
+                          <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                  <div className={`p-3 rounded-full ${appConfig.isRegistrationOpen ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                      <Power className="w-6 h-6" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-bold text-gray-800">ស្ថានភាពចុះឈ្មោះ</h3>
+                                      <p className="text-xs text-gray-500">
+                                          {appConfig.isRegistrationOpen ? 'កំពុងបើកដំណើរការ (Open)' : 'បានបិទជាបណ្តោះអាសន្ន (Closed)'}
+                                      </p>
+                                  </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={appConfig.isRegistrationOpen}
+                                    onChange={(e) => setAppConfig({...appConfig, isRegistrationOpen: e.target.checked})}
+                                  />
+                                  <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-600"></div>
+                              </label>
+                          </div>
+                          
+                          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 flex items-start gap-2">
+                              <Info className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                              <p>ប្រសិនបើបិទដំណើរការ អ្នកប្រើប្រាស់នឹងមិនអាចចុះឈ្មោះបានទេ ហើយនឹងឃើញសារ Maintenance ជំនួសវិញ។</p>
+                          </div>
+                      </div>
+
+                      <div className="mb-6">
+                          <label className="block text-gray-700 font-bold mb-2 flex items-center gap-2">
+                              <MessageSquare className="w-4 h-4 text-gray-500" /> សារបង្ហាញពេលបិទ (Maintenance Message)
+                          </label>
+                          <textarea 
+                              className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none font-khmer text-sm leading-relaxed"
+                              rows={4}
+                              placeholder="សូមបញ្ជាក់សារ..."
+                              value={appConfig.maintenanceMessage}
+                              onChange={(e) => setAppConfig({...appConfig, maintenanceMessage: e.target.value})}
+                              disabled={appConfig.isRegistrationOpen}
+                          ></textarea>
+                          <p className="text-xs text-gray-500 mt-2 text-right">សារនេះនឹងបង្ហាញតែពេលបិទដំណើរការប៉ុណ្ណោះ</p>
+                      </div>
+
+                      <div className="flex gap-3">
+                          <button 
+                            type="button" 
+                            onClick={() => setShowSettingsModal(false)}
+                            className="flex-1 py-3 rounded-xl border border-gray-300 text-gray-700 font-bold hover:bg-gray-50 transition-colors"
+                          >
+                              បោះបង់
+                          </button>
+                          <button 
+                            type="submit"
+                            disabled={isSavingConfig}
+                            className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
+                          >
+                              {isSavingConfig ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                              រក្សាទុក
+                          </button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
 
       {/* PDF Export Settings Modal (New Split View) */}
       {showPdfModal && (

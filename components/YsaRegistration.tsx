@@ -20,10 +20,11 @@ import {
   XCircle,
   Clock,
   Ban,
-  AlertTriangle
+  AlertTriangle,
+  Settings
 } from 'lucide-react';
 import { db } from '../firebaseConfig';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 
 interface FormData {
   id?: string; // Changed from number to string for Firestore ID
@@ -53,6 +54,11 @@ interface Snowflake {
 
 interface YsaRegistrationProps {
   onAdminClick?: () => void;
+}
+
+interface AppConfig {
+  isRegistrationOpen: boolean;
+  maintenanceMessage: string;
 }
 
 const CountdownTimer = () => {
@@ -178,8 +184,53 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
   const [isRegistrationFull, setIsRegistrationFull] = useState(false);
   const [isLoadingCheck, setIsLoadingCheck] = useState(true);
   
+  // System Config State
+  const [appConfig, setAppConfig] = useState<AppConfig>({
+      isRegistrationOpen: true,
+      maintenanceMessage: ""
+  });
+  
   const audioRef = useRef<HTMLAudioElement>(null);
   const REGISTRATION_LIMIT = 250;
+
+  // Snowflakes generation
+  const [snowflakes, setSnowflakes] = useState<Snowflake[]>([]);
+  
+  useEffect(() => {
+      const generatedSnowflakes = Array.from({ length: 50 }).map((_, i) => ({
+        id: i,
+        left: `${Math.random() * 100}%`,
+        animationDuration: `${Math.random() * 5 + 5}s`,
+        animationDelay: `${Math.random() * 5}s`,
+        opacity: Math.random() * 0.5 + 0.3,
+        size: Math.random() * 10 + 5
+      }));
+      setSnowflakes(generatedSnowflakes);
+  }, []);
+
+  // Fetch App Configuration (Maintenance Mode)
+  useEffect(() => {
+    const fetchConfig = async () => {
+        if (!db) {
+            // Check local storage fallback
+            const localConfig = localStorage.getItem('ysa_config');
+            if (localConfig) {
+                setAppConfig(JSON.parse(localConfig));
+            }
+            return;
+        }
+        try {
+            const docRef = doc(db, "ysa_config", "general");
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                setAppConfig(docSnap.data() as AppConfig);
+            }
+        } catch (error) {
+            console.error("Error fetching config:", error);
+        }
+    };
+    fetchConfig();
+  }, []);
 
   // Set specific Date Limits (1990 - 2007)
   useEffect(() => {
@@ -210,8 +261,6 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
             }
         } catch (error) {
             console.error("Error checking limit:", error);
-            // Fallback: If error, we default to open, or you could fail closed.
-            // For better UX, we'll let it stay open unless we are sure it's full.
         } finally {
             setIsLoadingCheck(false);
         }
@@ -325,6 +374,11 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
     // Safety check just in case user bypassed UI
     if (isRegistrationFull) {
         setSubmitError("ការចុះឈ្មោះបានពេញចំនួនហើយ។");
+        return;
+    }
+
+    if (!appConfig.isRegistrationOpen) {
+        setSubmitError("ការចុះឈ្មោះត្រូវបានបិទជាបណ្តោះអាសន្ន។");
         return;
     }
 
@@ -500,21 +554,63 @@ const YsaRegistration: React.FC<YsaRegistrationProps> = ({ onAdminClick }) => {
     }
   };
 
-  // Snowflakes generation
-  const [snowflakes, setSnowflakes] = useState<Snowflake[]>([]);
-  
-  useEffect(() => {
-      const generatedSnowflakes = Array.from({ length: 50 }).map((_, i) => ({
-        id: i,
-        left: `${Math.random() * 100}%`,
-        animationDuration: `${Math.random() * 5 + 5}s`,
-        animationDelay: `${Math.random() * 5}s`,
-        opacity: Math.random() * 0.5 + 0.3,
-        size: Math.random() * 10 + 5
-      }));
-      setSnowflakes(generatedSnowflakes);
-  }, []);
+  // --- Maintenance Mode View ---
+  if (!appConfig.isRegistrationOpen) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-red-900 via-red-800 to-green-900 flex items-center justify-center p-4 font-khmer relative overflow-hidden">
+             {/* Snowflakes for consistency */}
+             <div className="fixed inset-0 pointer-events-none z-50">
+                {snowflakes.map(flake => (
+                <div
+                    key={flake.id}
+                    className="absolute bg-white rounded-full animate-fall shadow-sm"
+                    style={{
+                    left: flake.left,
+                    top: '-20px',
+                    width: `${flake.size}px`,
+                    height: `${flake.size}px`,
+                    opacity: flake.opacity,
+                    animationDuration: flake.animationDuration,
+                    animationDelay: flake.animationDelay
+                    }}
+                />
+                ))}
+             </div>
+             
+             <div className="bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl p-8 max-w-lg w-full text-center border-4 border-yellow-400 relative z-10 flex flex-col items-center">
+                 <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mb-6 ring-4 ring-red-200 shadow-lg animate-pulse-slow">
+                    <Settings className="w-12 h-12 text-red-600 animate-spin-slow" />
+                 </div>
+                 
+                 <h2 className="text-2xl md:text-3xl font-moul text-red-700 mb-6 drop-shadow-sm leading-relaxed">
+                     ប្រព័ន្ធកំពុងត្រួតពិនិត្យ
+                 </h2>
+                 
+                 <div className="bg-red-50 border border-red-100 rounded-xl p-6 mb-8 w-full">
+                     <p className="text-gray-800 text-lg md:text-xl leading-loose font-khmer font-medium">
+                         {appConfig.maintenanceMessage || "សូមបន្តធ្វើការរង់ចាំ ប្រព័ន្ឋចុះឈ្មោះកំពុងត្រួតពិនិត្យ និងបើកដំណើរការចុះឈ្មោះម្តងទៀត"}
+                     </p>
+                 </div>
+                 
+                 <div className="flex items-center gap-2 text-gray-500 text-sm">
+                    <Clock className="w-4 h-4" />
+                    <span>សូមអរគុណសម្រាប់ការរង់ចាំ</span>
+                 </div>
+             </div>
 
+             {/* Footer Decoration with Admin Access */}
+             <div className="fixed bottom-0 left-0 w-full text-center p-4 z-20">
+                 <button 
+                   onClick={onAdminClick}
+                   className="text-xs text-white/50 hover:text-white transition-colors flex items-center justify-center mx-auto"
+                 >
+                   <LockKeyhole className="w-3 h-3 mr-1" />
+                   Admin Access
+                 </button>
+             </div>
+        </div>
+      );
+  }
 
   if (isSubmitted) {
     return (
